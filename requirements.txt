@@ -1,0 +1,10 @@
+streamlit
+pandas
+plotly
+pdfplumber
+Pillow
+opencv-python-headless
+google-genai
+python-dotenv
+openpyxl
+python-dateutil

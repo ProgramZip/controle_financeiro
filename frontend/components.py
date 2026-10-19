@@ -1,0 +1,396 @@
+import streamlit as st
+from datetime import date, datetime
+from backend.database import get_connection
+from backend.crud import add_transaction, add_recurring_bill
+from backend.utils import (
+    CATEGORIAS_DESPESA,
+    CATEGORIAS_RECEITA,
+    save_invoice_image,
+    decode_qr_code
+)
+
+
+def apply_custom_css():
+    """Aplica estilos CSS modernos, responsivos e Mobile-First no Streamlit."""
+    st.markdown("""
+        <style>
+        /* Importação de fonte moderna Inter */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        html, body, [class*="css"] {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        /* Otimizações Mobile-First */
+        @media (max-width: 768px) {
+            .block-container {
+                padding-top: 1.5rem !important;
+                padding-bottom: 2rem !important;
+                padding-left: 0.8rem !important;
+                padding-right: 0.8rem !important;
+            }
+            .stMetric {
+                padding: 10px !important;
+            }
+            .metric-card {
+                margin-bottom: 0.8rem !important;
+            }
+        }
+
+        /* Estilização de Cartões de Métricas */
+        .metric-card {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            padding: 1.1rem;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(0, 200, 150, 0.4);
+        }
+        .metric-title {
+            font-size: 0.85rem;
+            color: #8b949e;
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.3rem;
+        }
+        .metric-value {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 0.2rem;
+        }
+        .metric-sub {
+            font-size: 0.78rem;
+            color: #3fb950;
+        }
+
+        /* Estilização de botões principais */
+        div.stButton > button:first-child {
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        /* Estilização de botões da barra lateral (menu executivo) */
+        section[data-testid="stSidebar"] div.stButton > button {
+            text-align: left !important;
+            justify-content: flex-start !important;
+            padding: 0.65rem 1rem !important;
+            font-size: 0.92rem !important;
+            border-radius: 8px !important;
+            margin-bottom: 0.25rem !important;
+            border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        }
+        section[data-testid="stSidebar"] div.stButton > button:hover {
+            border-color: rgba(63, 185, 80, 0.5) !important;
+            transform: translateX(2px);
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+
+def render_metric_card(title: str, value: str, sub: str = "", color: str = "#3fb950", icon: str = ""):
+    """Renderiza um card visual de métrica responsivo."""
+    st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">{icon} {title}</div>
+            <div class="metric-value">{value}</div>
+            {f'<div class="metric-sub" style="color: {color};">{sub}</div>' if sub else ''}
+        </div>
+    """, unsafe_allow_html=True)
+
+
+@st.dialog("➕ Nova Movimentação", width="large")
+def modal_nova_movimentacao(user_id: int = None):
+    """
+    Modal pop-up para cadastro ágil de Despesas e Receitas seguindo
+    integralmente as regras do projeto.md.
+    """
+    # 1. Seleção Obrigatória do Tipo
+    tipo = st.radio(
+        "Tipo de Movimentação",
+        options=["Despesa", "Receita"],
+        horizontal=True,
+        index=0,
+        key="modal_mov_tipo"
+    )
+
+    st.markdown("---")
+
+    if tipo == "Despesa":
+        # ------------------ FLUXO DE DESPESA ------------------
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            categoria = st.selectbox(
+                "Categoria *",
+                options=CATEGORIAS_DESPESA,
+                index=0,
+                key="modal_desp_categoria"
+            )
+        with col2:
+            valor = st.number_input(
+                "Valor Total (R$) *",
+                min_value=0.01,
+                value=10.0,
+                step=1.0,
+                format="%.2f",
+                key="modal_desp_valor"
+            )
+
+        descricao = st.text_input(
+            "Descrição *",
+            placeholder="Ex: Almoço de negócios, Parcela do Celular...",
+            key="modal_desp_descricao"
+        )
+
+        col3, col4 = st.columns([1, 1])
+        with col3:
+            forma_pagamento = st.radio(
+                "Forma de Pagamento",
+                options=["À Vista", "Parcelado"],
+                horizontal=True,
+                key="modal_desp_forma"
+            )
+        with col4:
+            data_vencimento = st.date_input(
+                "Data de Vencimento *",
+                value=date.today(),
+                key="modal_desp_data"
+            )
+
+        num_parcelas = 1
+        if forma_pagamento == "Parcelado":
+            st.markdown("##### 💳 Detalhes do Parcelamento")
+            num_parcelas = st.number_input(
+                "Número de Parcelas",
+                min_value=2,
+                max_value=72,
+                value=2,
+                step=1,
+                key="modal_desp_parcelas"
+            )
+            valor_parcela = valor / num_parcelas
+            st.info(f"💡 **Resumo do Parcelamento:** {num_parcelas}x de **R$ {valor_parcela:,.2f}** (primeira parcela em {data_vencimento.strftime('%d/%m/%Y')})")
+
+        col5, col6 = st.columns([1, 1])
+        with col5:
+            status = st.radio(
+                "Status da Despesa",
+                options=["Pago", "Pendente"],
+                horizontal=True,
+                index=1,
+                key="modal_desp_status"
+            )
+        with col6:
+            conta_mensal = st.radio(
+                "Salvar como Conta Mensal Recorrente?",
+                options=["Não", "Sim"],
+                horizontal=True,
+                key="modal_desp_conta_mensal",
+                help="Se marcado como Sim, esta despesa será adicionada à matriz de contas fixas que se repetem todo mês."
+            )
+
+        # Seção de Nota Fiscal
+        st.markdown("##### 🧾 Nota Fiscal / Comprovante")
+        tem_nota = st.radio(
+            "Deseja anexar Nota Fiscal ou comprovante?",
+            options=["Não", "Sim"],
+            horizontal=True,
+            key="modal_desp_tem_nota"
+        )
+
+        invoice_path = None
+        if tem_nota == "Sim":
+            metodo_foto = st.radio(
+                "Forma de Envio",
+                options=["Upload de Arquivo", "Câmera do Dispositivo"],
+                horizontal=True,
+                key="modal_desp_metodo_foto"
+            )
+
+            foto_file = None
+            if metodo_foto == "Upload de Arquivo":
+                foto_file = st.file_uploader("Selecione a foto da nota", type=["jpg", "jpeg", "png"], key="modal_desp_file_uploader")
+            else:
+                foto_file = st.camera_input("Tirar foto da nota fiscal", key="modal_desp_camera_input")
+
+            if foto_file is not None:
+                foto_bytes = foto_file.getvalue()
+                # Tenta decodificar QR Code
+                qr_conteudo = decode_qr_code(foto_bytes)
+                if qr_conteudo:
+                    st.success(f"🔍 **QR Code Decodificado com Sucesso:** {qr_conteudo}")
+                else:
+                    st.caption("ℹ️ Nenhum QR Code legível detectado nesta imagem, mas o comprovante será salvo.")
+
+                # Gravação da imagem
+                try:
+                    invoice_path = save_invoice_image(foto_bytes)
+                    st.caption(f"Arquivo salvo com sucesso em `{invoice_path}`")
+                except Exception as e:
+                    st.error(f"Erro ao salvar nota fiscal: {e}")
+
+        st.markdown("---")
+
+        if st.button("💾 Gravar Despesa", type="primary", width="stretch", key="modal_desp_btn_salvar"):
+            if not descricao.strip():
+                st.error("Por favor, preencha o campo Descrição.")
+                return
+
+            try:
+                due_date_str = data_vencimento.strftime("%Y-%m-%d")
+                gid = add_transaction(
+                    user_id=user_id,
+                    trans_type="despesa",
+                    category=categoria,
+                    description=descricao.strip(),
+                    amount=valor,
+                    payment_method=forma_pagamento,
+                    installment_total=num_parcelas,
+                    due_date=due_date_str,
+                    status=status,
+                    invoice_path=invoice_path,
+                    is_recurring=1 if conta_mensal == "Sim" else 0
+                )
+
+                # Se marcou conta mensal, cadastra também em recurring_bills
+                if conta_mensal == "Sim":
+                    add_recurring_bill(
+                        user_id=user_id,
+                        bill_type="despesa",
+                        category=categoria,
+                        description=descricao.strip(),
+                        amount=valor,
+                        due_day=data_vencimento.day,
+                        is_active=1
+                    )
+
+                st.success("✅ Despesa cadastrada com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar movimentação: {e}")
+
+    else:
+        # ------------------ FLUXO DE RECEITA ------------------
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            categoria = st.selectbox(
+                "Categoria de Receita *",
+                options=CATEGORIAS_RECEITA,
+                index=0,
+                key="modal_rec_categoria"
+            )
+        with col2:
+            valor = st.number_input(
+                "Valor do Recebimento (R$) *",
+                min_value=0.01,
+                value=100.0,
+                step=10.0,
+                format="%.2f",
+                key="modal_rec_valor"
+            )
+
+        descricao = st.text_input(
+            "Descrição *",
+            placeholder="Ex: Salário da empresa, Venda de consultoria, Aluguel do imóvel...",
+            key="modal_rec_descricao"
+        )
+
+        col3, col4 = st.columns([1, 1])
+        with col3:
+            data_recebimento = st.date_input(
+                "Data do Recebimento *",
+                value=date.today(),
+                key="modal_rec_data"
+            )
+        with col4:
+            status_rec = st.radio(
+                "Status do Recebimento",
+                options=["Recebido", "Pendente"],
+                horizontal=True,
+                index=0,
+                key="modal_rec_status"
+            )
+
+        recebimento_mensal = st.radio(
+            "Salvar como Recebimento Mensal Fixo?",
+            options=["Não", "Sim"],
+            horizontal=True,
+            key="modal_rec_mensal",
+            help="Se Sim, este recebimento será adicionado à matriz de recorrência que se repete mensalmente."
+        )
+
+        st.markdown("---")
+
+        if st.button("💾 Gravar Receita", type="primary", width="stretch", key="modal_rec_btn_salvar"):
+            if not descricao.strip():
+                st.error("Por favor, preencha o campo Descrição.")
+                return
+
+            try:
+                date_str = data_recebimento.strftime("%Y-%m-%d")
+                status_val = "Recebido" if status_rec == "Recebido" else "Pendente"
+
+                add_transaction(
+                    user_id=user_id,
+                    trans_type="receita",
+                    category=categoria,
+                    description=descricao.strip(),
+                    amount=valor,
+                    payment_method="À Vista",
+                    installment_total=1,
+                    due_date=date_str,
+                    status=status_val,
+                    is_recurring=1 if recebimento_mensal == "Sim" else 0
+                )
+
+                if recebimento_mensal == "Sim":
+                    add_recurring_bill(
+                        user_id=user_id,
+                        bill_type="receita",
+                        category=categoria,
+                        description=descricao.strip(),
+                        amount=valor,
+                        due_day=data_recebimento.day,
+                        is_active=1
+                    )
+
+                st.success("✅ Receita cadastrada com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar movimentação: {e}")
+
+
+@st.dialog("➕ Nova Conta Fixa Recorrente", width="medium")
+def modal_nova_conta_recorrente(user_id: int = None):
+    """
+    Modal pop-up flutuante para cadastro de contas mensais fixas recorrentes,
+    eliminando formulários ou expanders estáticos inline.
+    """
+    c_tipo = st.radio("Tipo da Conta", ["despesa", "receita"], horizontal=True, key="modal_bill_tipo")
+    c_cat = st.selectbox(
+        "Categoria *",
+        options=CATEGORIAS_DESPESA if c_tipo == "despesa" else CATEGORIAS_RECEITA,
+        key="modal_bill_cat"
+    )
+    c_desc = st.text_input("Descrição *", placeholder="Ex: Internet Fibra, Aluguel, Salário...", key="modal_bill_desc")
+    c_val = st.number_input("Valor Mensal (R$) *", min_value=0.01, step=10.0, format="%.2f", key="modal_bill_val")
+    c_dia = st.number_input("Dia do Vencimento no Mês (1-31) *", min_value=1, max_value=31, value=10, key="modal_bill_dia")
+
+    st.markdown("---")
+    if st.button("💾 Salvar Conta Recorrente", type="primary", width="stretch", key="modal_bill_submit"):
+        if c_desc.strip():
+            try:
+                add_recurring_bill(user_id, c_tipo, c_cat, c_desc.strip(), c_val, int(c_dia))
+                st.success("✅ Conta recorrente cadastrada com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar conta: {e}")
+        else:
+            st.error("Por favor, preencha o campo Descrição.")
+

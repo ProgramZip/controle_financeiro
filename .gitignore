@@ -1,0 +1,74 @@
+# =====================================================================
+# GitIgnore - Controle Financeiro (Streamlit Cloud Deploy)
+# =====================================================================
+
+# Ambientes Virtuais (Virtual Environments)
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Banco de Dados SQLite (Dados Particulares e Backups)
+financas.db
+*.db
+*.sqlite
+*.sqlite3
+financas_backup_*.db
+
+# Arquivos de Uploads / Comprovantes / Notas Fiscais
+uploads/
+uploads/notas/*
+
+# Arquivos de Variáveis de Ambiente e Chaves de API (Segurança)
+.env
+*.env
+.env.*
+!.env.example
+
+# Configurações sensíveis do Streamlit
+.streamlit/secrets.toml
+
+# Bytecodes e Caches do Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Caches de Testes e Ferramentas
+.pytest_cache/
+.coverage
+htmlcov/
+.agent/teste/
+
+# Arquivos do Sistema Operacional e IDEs
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Logs e Arquivos Temporários
+*.log
+scratch/
+temp/
+tmp/
