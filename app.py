@@ -60,8 +60,6 @@ def render_login():
                     else:
                         st.error("Credenciais inválidas. Tente novamente.")
 
-        st.caption("ℹ️ Credencial padrão de primeiro acesso: **admin** / **admin123**")
-
 
 # 4. Controle de Fluxo: Login vs Aplicação Principal
 if not st.session_state["user"]:

@@ -2,7 +2,10 @@ import uuid
 import calendar
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
-from backend.database import get_connection, hash_password
+from backend.database import (
+    get_connection, hash_password,
+    update_user_password, change_password_with_verification
+)
 
 
 # =====================================================================
@@ -338,10 +341,24 @@ def update_transaction_status(transaction_id: int, new_status: str, requesting_u
         return cursor.rowcount > 0
 
 
+def revert_transaction_to_pending(transaction_id: int, requesting_user_id: int = None) -> bool:
+    """Reverte o status de uma conta paga ou recebida de volta para 'Pendente'."""
+    return update_transaction_status(transaction_id, "Pendente", requesting_user_id=requesting_user_id)
+
+
+def get_transaction_by_id(transaction_id: int):
+    """Retorna uma única transação pelo ID ou None."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM transactions WHERE id = ?", (int(transaction_id),))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
 def update_transaction(transaction_id: int, requesting_user_id: int = None, **kwargs) -> bool:
     """Atualiza campos específicos de uma transação."""
     allowed_fields = {
-        "category", "description", "amount", "payment_method",
+        "type", "category", "description", "amount", "payment_method",
         "due_date", "status", "invoice_path"
     }
     updates = []
@@ -834,3 +851,42 @@ def delete_user(user_id: int) -> bool:
         cursor.execute("DELETE FROM users WHERE id = ?", (int(user_id),))
         conn.commit()
         return cursor.rowcount > 0
+
+
+def change_user_password(user_id: int, current_password: str, new_password: str) -> tuple[bool, str]:
+    """
+    Permite que o usuário autenticado altere sua própria senha fornecendo a senha atual.
+    Valida a senha atual via hash SHA-256 e grava a nova senha.
+    """
+    return change_password_with_verification(user_id, current_password, new_password)
+
+
+def admin_set_user_password(admin_user_id: int, target_user_id: int, new_password: str) -> tuple[bool, str]:
+    """
+    Permite que um administrador redefina diretamente a senha de qualquer usuário (inclusive a do próprio admin).
+    """
+    if not new_password or len(new_password.strip()) < 4:
+        return False, "A nova senha deve ter no mínimo 4 caracteres."
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        # Verificar se o solicitante é admin
+        cursor.execute("SELECT role FROM users WHERE id = ?", (int(admin_user_id),))
+        row = cursor.fetchone()
+        if not row or row["role"] != "admin":
+            return False, "Apenas administradores podem redefinir senhas diretamente."
+
+        # Verificar se usuário alvo existe
+        cursor.execute("SELECT username FROM users WHERE id = ?", (int(target_user_id),))
+        target_row = cursor.fetchone()
+        if not target_row:
+            return False, "Usuário de destino não encontrado."
+
+    try:
+        ok = update_user_password(target_user_id, new_password.strip())
+        if ok:
+            return True, f"Senha do usuário '{target_row['username']}' atualizada com sucesso!"
+        return False, "Não foi possível atualizar a senha."
+    except Exception as e:
+        return False, f"Erro ao atualizar senha: {e}"
+

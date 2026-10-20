@@ -389,3 +389,118 @@ Registro cronológico e técnico de todas as alterações, implementações e ma
        - Configuração de `GEMINI_API_KEY` na área de Secrets do Streamlit Cloud.
        - Orientações de login inicial (`admin` / `admin123`) e auto-provisionamento do SQLite na nuvem.
 
+---
+
+## [Fase 1 - Melhorias Pré-Deploy] - 2026-10-20 - Segurança e Credenciais (Alteração e Redefinição de Senhas)
+- **Status:** Concluída com sucesso total (100% dos testes aprovados).
+- **Objetivos Atingidos:**
+  1. **Alteração da Senha Própria por Qualquer Utilizador (Inclusive Administrador):**
+     - Implementado mecanismo seguro para alteração de credencial pessoal com validação prévia da senha atual via hash SHA-256 e exigência de confirmação da nova senha.
+  2. **Redefinição Administrativa de Senhas:**
+     - Implementado recurso exclusivo para administradores redefinirem diretamente a senha de qualquer conta do sistema em caso de esquecimento ou gerenciamento de credenciais.
+- **Ações Realizadas no Backend (`backend/database.py` e `backend/crud.py`):**
+  - Em `backend/database.py`:
+    - Criada a função `update_user_password(user_id: int, new_password: str) -> bool`: aplica hash SHA-256 e grava a nova credencial no SQLite.
+    - Criada a função `change_password_with_verification(user_id: int, current_password: str, new_password: str) -> tuple[bool, str]`: valida se a senha atual confere com o hash registrado, checa tamanho mínimo (>= 4 caracteres) e atualiza a senha de forma atômica.
+  - Em `backend/crud.py`:
+    - Criada a função `change_user_password(user_id: int, current_password: str, new_password: str)`: encapsula a alteração com verificação para o usuário conectado.
+    - Criada a função `admin_set_user_password(admin_user_id: int, target_user_id: int, new_password: str) -> tuple[bool, str]`: valida permissão `admin` do solicitante antes de aplicar a nova senha ao usuário alvo.
+- **Ações Realizadas no Frontend (`frontend/views.py`):**
+  - Na tela **"🤖 Consultor IA & Ajustes"** -> aba **"⚙️ Configurações & Backup"**:
+    - Adicionada a seção **"🔐 Segurança & Alteração de Senha"** para todos os utilizadores autenticados, com campos para Senha Atual, Nova Senha e Confirmação de Senha, com validação instantânea e alertas visuais de feedback.
+    - Na subseção **"👥 Gestão de Usuários"** (visível apenas para perfil `admin`), adicionado o expander **"🔑 Redefinir Senha de Usuário (Admin)"**, permitindo selecionar qualquer conta cadastrada e definir uma nova senha diretamente.
+- **Validação e Testes:**
+  - Criado e executado o script automatizado `.agent/scripts_auxiliares/teste_fase1_senhas.py`:
+    - Validação de senha atual incorreta (bloqueio com erro explicativo).
+    - Validação de nova senha menor que 4 caracteres (bloqueio).
+    - Validação de alteração legítima de senha do usuário (novo login efetuado com sucesso e senha antiga invalidada).
+    - Validação de redefinição administrativa por usuário `admin`.
+    - Bloqueio de autorização caso usuário comum tente executar comandos de redefinição administrativa.
+    - Alteração e restauração da senha do administrador geral do sistema.
+    - Testes de regressão (`teste_exclusao_e_isolamento.py`) aprovados com 100% de integridade.
+
+---
+
+## [Fase 2 - Melhorias Pré-Deploy] - 2026-10-20 - Edição de Movimentações e Contas ("Alterar" ao lado de "Apagar")
+- **Status:** Concluída com sucesso total (100% dos testes aprovados).
+- **Objetivos Atingidos:**
+  1. **Edição Direta de Lançamentos e Contas:** Permitir a modificação imediata de qualquer campo (categoria, descrição, valor, data de vencimento/referência, status, forma de pagamento e anexo de nota fiscal) sem necessidade de excluir e readicionar o registro.
+  2. **Adição do Botão "✏️ Alterar" ao Lado de "🗑️ Apagar":** Presente de forma homogênea em todas as tabelas e listas da aplicação (Despesas Pendentes, Despesas Pagas, Receitas Pendentes, Receitas Recebidas e Matriz de Contas Fixas Recorrentes).
+- **Ações Realizadas no Backend (`backend/crud.py`):**
+  - Implementada a função `get_transaction_by_id(transaction_id: int) -> dict`: busca registro único para leitura e preenchimento defensivo.
+  - Atualizada a função `update_transaction(transaction_id: int, requesting_user_id: int = None, **kwargs) -> bool`:
+    - Adicionado suporte formal ao campo `type` (`despesa` / `receita`), permitindo inclusive a conversão de tipo caso o lançamento tenha sido registrado erroneamente.
+    - Preservadas as validações de autorização e propriedade de dados via `can_user_edit_resource`.
+  - Validada a função `update_recurring_bill` para suporte pleno à edição de `type`, `category`, `description`, `amount`, `due_day` e `is_active`.
+- **Ações Realizadas no Frontend (`frontend/components.py` e `frontend/views.py`):**
+  - Em `frontend/components.py`:
+    - Criado o modal decorado `@st.dialog("✏️ Alterar Movimentação", width="large")`:
+      - Carrega previamente os dados reais da movimentação.
+      - Oferece alternância dinâmica entre Despesa e Receita com atualização de categorias correspondentes.
+      - Edição de valor, descrição, data de vencimento, forma de pagamento e status.
+      - Pré-visualização do comprovante/nota fiscal atual, com opção de remoção ou substituição por novo upload.
+    - Criado o modal decorado `@st.dialog("✏️ Alterar Conta Mensal Recorrente", width="medium")`:
+      - Permite editar tipo da conta, categoria, descrição, valor mensal, dia do vencimento (1 a 31) e estado da recorrência (Ativa ou Pausada).
+  - Em `frontend/views.py`:
+    - Na tela de **Movimentações (`view_movimentacoes`)**:
+      - Adicionado o botão `✏️ Alterar` em `desp_pendentes` (Contas a Pagar).
+      - Adicionado o botão `✏️ Alterar` em `desp_pagas` (Contas Concluídas).
+      - Adicionado o botão `✏️ Alterar` em `rec_pendentes` (Valores a Receber).
+      - Adicionado o botão `✏️ Alterar` em `rec_recebidas` (Valores Já Recebidos).
+    - Na tela de **Contas Mensais (`view_contas_mensais`)**:
+      - Adicionado o botão `✏️ Alterar` na lista de contas fixas recorrentes, posicionado ao lado de `🗑️ Apagar`.
+- **Validação e Testes:**
+  - Criado e executado o script automatizado `.agent/scripts_auxiliares/teste_fase2_edicao.py`:
+    - Teste de atualização de múltiplos campos de transação com validação dos dados gravados no SQLite.
+    - Teste de bloqueio de edição por usuário não autorizado (garantia de isolamento de segurança).
+    - Teste de atualização de conta recorrente com validação no SQLite.
+    - Reexecução dos testes da Fase 1 (`teste_fase1_senhas.py`) e regressão (`teste_exclusao_e_isolamento.py`) com 100% de sucesso.
+
+---
+
+## [Fase 3 - Melhorias Pré-Deploy] - 2026-10-20 - Cards de Resumo de Receitas e Despesas na Aba Movimentações
+- **Status:** Concluída com sucesso total (100% dos testes aprovados).
+- **Objetivos Atingidos:**
+  1. **Blocos / Quadrados Visuais Executivos no Topo de Movimentações:** Exibição clara e de alto impacto visual do **Total das Despesas Adicionadas** e do **Total das Receitas Adicionadas** diretamente no topo da tela de movimentações (`view_movimentacoes`).
+  2. **Filtro e Sincronização Dinâmica por Período:** Seletor de período integrado que permite alternar entre "Todos os Lançamentos" (acumulado histórico) e meses específicos (`YYYY-MM`), recalculando instantaneamente os valores somados, contadores e tabelas.
+- **Ações Realizadas no Frontend (`frontend/views.py`):**
+  - Implementado o seletor `📅 Período / Mês de Referência` no topo da tela, listando os meses disponíveis com dados e a opção padrão acumulada.
+  - Criados dois blocos métricos destacados via `render_metric_card`:
+    - **Card 1 (🔴 Total das Despesas Adicionadas):** Exibe a soma total formatada em `R$ X,XXX.XX`, contador de despesas registradas e indicação do período selecionado em cor de destaque `#f85149`.
+    - **Card 2 (🟢 Total das Receitas Adicionadas):** Exibe a soma total formatada em `R$ X,XXX.XX`, contador de receitas registradas e indicação do período selecionado em cor de destaque `#3fb950`.
+  - Sincronização automática das abas inferiores (`🔴 Despesas` e `🟢 Receitas`) para refletir o período selecionado de forma responsiva.
+- **Validação e Testes:**
+  - Criado e executado o script automatizado `.agent/scripts_auxiliares/teste_fase3_cards_movimentacoes.py`:
+    - Teste de agregação geral de receitas e despesas.
+    - Teste de agregação filtrada por mês específico (`2026-10`).
+    - Validação de integridade de importação e execução de `frontend/views.py` e `render_metric_card`.
+    - Reexecução de todos os testes das Fases 1 e 2 e regressão (`teste_fase1_senhas.py`, `teste_fase2_edicao.py`, `teste_exclusao_e_isolamento.py`) com 100% de aprovação.
+
+---
+
+## [Fase 4 - Melhorias Pré-Deploy] - 2026-10-20 - Reversão de Status (De Concluídas/Pagas para Pendentes)
+- **Status:** Concluída com sucesso total (100% dos testes aprovados).
+- **Objetivos Atingidos:**
+  1. **Reversão Instantânea em 1 Clique:** Possibilidade de desmarcar e retornar qualquer conta paga ou receita recebida de volta para o status "Pendente", corrigindo instantaneamente marcações acidentais ou conciliações equivocadas.
+  2. **Harmonização Visual da Interface:** O botão "🔄 Retornar" foi inserido de forma simétrica nas seções de contas pagas e receitas recebidas, mantendo proporções homogêneas de colunas com as seções pendentes.
+- **Ações Realizadas no Backend (`backend/crud.py`):**
+  - Implementada a função dedicada `revert_transaction_to_pending(transaction_id: int, requesting_user_id: int = None) -> bool`:
+    - Valida propriedade do recurso via `can_user_edit_resource`.
+    - Atualiza atomicamente o campo `status` para `'Pendente'` no banco de dados SQLite.
+- **Ações Realizadas no Frontend (`frontend/views.py`):**
+  - Na tela de **Movimentações (`view_movimentacoes`)**:
+    - Na seção **`desp_pagas` (Contas Pagas / Concluídas)**:
+      - Adicionado o botão `🔄 Retornar` ao lado de `✏️ Alterar` e `🗑️ Apagar`, com mensagem de sucesso e atualização imediata de estado.
+    - Na seção **`rec_recebidas` (Valores Já Recebidos)**:
+      - Adicionado o botão `🔄 Retornar` ao lado de `✏️ Alterar` e `🗑️ Apagar`, com mensagem de sucesso e atualização imediata de estado.
+- **Validação e Testes:**
+  - Criado e executado o script automatizado `.agent/scripts_auxiliares/teste_fase4_reversao_status.py`:
+    - Validação de reversão de despesa paga para pendente com checagem direta no SQLite.
+    - Validação de reversão de receita recebida para pendente com checagem direta no SQLite.
+    - Bloqueio de tentativa de reversão por usuário não autorizado.
+    - Execução da suíte completa de testes de todas as 4 fases (`teste_fase1_senhas.py`, `teste_fase2_edicao.py`, `teste_fase3_cards_movimentacoes.py`, `teste_fase4_reversao_status.py`, `teste_exclusao_e_isolamento.py`) com 100% de aprovação e zero regressões.
+
+
+
+
+

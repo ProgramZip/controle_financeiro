@@ -1,7 +1,8 @@
+import os
 import streamlit as st
 from datetime import date, datetime
 from backend.database import get_connection
-from backend.crud import add_transaction, add_recurring_bill
+from backend.crud import add_transaction, add_recurring_bill, update_transaction, update_recurring_bill
 from backend.utils import (
     CATEGORIAS_DESPESA,
     CATEGORIAS_RECEITA,
@@ -393,4 +394,172 @@ def modal_nova_conta_recorrente(user_id: int = None):
                 st.error(f"Erro ao salvar conta: {e}")
         else:
             st.error("Por favor, preencha o campo Descrição.")
+
+
+@st.dialog("✏️ Alterar Movimentação", width="large")
+def modal_editar_movimentacao(item: dict, user_id: int):
+    """
+    Modal flutuante para edição completa de uma movimentação existente.
+    Permite alterar tipo, categoria, descrição, valor, data, status e comprovante.
+    """
+    item_id = item["id"]
+    st.caption(f"Editando Lançamento ID #{item_id}")
+
+    # 1. Tipo
+    cur_tipo = "Despesa" if item.get("type") == "despesa" else "Receita"
+    tipo = st.radio(
+        "Tipo de Movimentação",
+        options=["Despesa", "Receita"],
+        horizontal=True,
+        index=0 if cur_tipo == "Despesa" else 1,
+        key=f"edit_mov_tipo_{item_id}"
+    )
+
+    st.markdown("---")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        cats = CATEGORIAS_DESPESA if tipo == "Despesa" else CATEGORIAS_RECEITA
+        cur_cat = item.get("category", cats[0])
+        cat_idx = cats.index(cur_cat) if cur_cat in cats else 0
+        categoria = st.selectbox("Categoria *", options=cats, index=cat_idx, key=f"edit_mov_cat_{item_id}")
+    with col2:
+        cur_val = float(item.get("amount", 10.0))
+        valor = st.number_input("Valor Total (R$) *", min_value=0.01, value=cur_val, step=1.0, format="%.2f", key=f"edit_mov_val_{item_id}")
+
+    descricao = st.text_input("Descrição *", value=item.get("description", ""), key=f"edit_mov_desc_{item_id}")
+
+    col3, col4 = st.columns(2)
+    with col3:
+        if tipo == "Despesa":
+            cur_forma = item.get("payment_method", "À Vista")
+            forma_idx = 0 if cur_forma == "À Vista" else 1
+            forma_pag = st.radio("Forma de Pagamento", ["À Vista", "Parcelado"], index=forma_idx, horizontal=True, key=f"edit_mov_forma_{item_id}")
+        else:
+            forma_pag = "À Vista"
+            st.info("Forma de Pagamento: À Vista")
+    with col4:
+        try:
+            cur_dt = datetime.strptime(str(item.get("due_date", ""))[:10], "%Y-%m-%d").date()
+        except Exception:
+            cur_dt = date.today()
+        data_venc = st.date_input("Data de Vencimento / Referência *", value=cur_dt, key=f"edit_mov_dt_{item_id}")
+
+    col5, col6 = st.columns(2)
+    with col5:
+        if tipo == "Despesa":
+            st_opts = ["Pendente", "Pago"]
+        else:
+            st_opts = ["Pendente", "Recebido"]
+        cur_st = item.get("status", st_opts[0])
+        st_idx = st_opts.index(cur_st) if cur_st in st_opts else 0
+        status_sel = st.radio("Status *", st_opts, index=st_idx, horizontal=True, key=f"edit_mov_st_{item_id}")
+    with col6:
+        if item.get("installment_total", 1) > 1:
+            st.caption(f"Parcela: **{item['installment_current']}/{item['installment_total']}** (Grupo: `{item.get('group_id', 'N/A')}`)")
+        else:
+            st.caption("Lançamento avulso (parcela única)")
+
+    # Comprovante / Nota Fiscal
+    st.markdown("##### 🧾 Comprovante / Nota Fiscal")
+    current_invoice = item.get("invoice_path")
+    invoice_path_final = current_invoice
+    remover_comprovante = False
+
+    if current_invoice and os.path.exists(current_invoice):
+        col_inv1, col_inv2 = st.columns([1, 2])
+        with col_inv1:
+            st.image(current_invoice, caption="Comprovante Atual", width=150)
+        with col_inv2:
+            remover_comprovante = st.checkbox("Excluir este comprovante", key=f"chk_rem_inv_{item_id}")
+    else:
+        st.caption("Nenhum comprovante anexado atualmente.")
+
+    novo_arquivo = st.file_uploader("Substituir / Anexar novo comprovante (JPG, PNG)", type=["jpg", "jpeg", "png"], key=f"upload_edit_inv_{item_id}")
+    if novo_arquivo is not None:
+        try:
+            invoice_path_final = save_invoice_image(novo_arquivo.getvalue())
+            st.success("Novo comprovante processado com sucesso!")
+        except Exception as e:
+            st.error(f"Erro ao salvar novo comprovante: {e}")
+    elif remover_comprovante:
+        invoice_path_final = None
+
+    st.markdown("---")
+    if st.button("💾 Salvar Alterações", type="primary", width="stretch", key=f"btn_salvar_edit_{item_id}"):
+        if not descricao.strip():
+            st.error("Por favor, preencha o campo Descrição.")
+            return
+
+        try:
+            due_date_str = data_venc.strftime("%Y-%m-%d")
+            ok = update_transaction(
+                transaction_id=item_id,
+                requesting_user_id=user_id,
+                type=tipo.lower(),
+                category=categoria,
+                description=descricao.strip(),
+                amount=round(valor, 2),
+                payment_method=forma_pag,
+                due_date=due_date_str,
+                status=status_sel,
+                invoice_path=invoice_path_final
+            )
+            if ok:
+                st.success("✅ Movimentação alterada com sucesso!")
+                st.rerun()
+            else:
+                st.error("Erro ao atualizar a movimentação no banco de dados.")
+        except Exception as e:
+            st.error(f"Erro ao atualizar: {e}")
+
+
+@st.dialog("✏️ Alterar Conta Mensal Recorrente", width="medium")
+def modal_editar_conta_recorrente(bill: dict, user_id: int):
+    """
+    Modal flutuante para edição de uma conta fixa recorrente.
+    """
+    bill_id = bill["id"]
+    st.caption(f"Editando Conta Recorrente ID #{bill_id}")
+
+    cur_tipo = bill.get("type", "despesa")
+    c_tipo = st.radio("Tipo da Conta", ["despesa", "receita"], index=0 if cur_tipo == "despesa" else 1, horizontal=True, key=f"edit_bill_tipo_{bill_id}")
+    cats = CATEGORIAS_DESPESA if c_tipo == "despesa" else CATEGORIAS_RECEITA
+    cur_cat = bill.get("category", cats[0])
+    cat_idx = cats.index(cur_cat) if cur_cat in cats else 0
+    c_cat = st.selectbox("Categoria *", options=cats, index=cat_idx, key=f"edit_bill_cat_{bill_id}")
+
+    c_desc = st.text_input("Descrição *", value=bill.get("description", ""), key=f"edit_bill_desc_{bill_id}")
+    c_val = st.number_input("Valor Mensal (R$) *", min_value=0.01, value=float(bill.get("amount", 10.0)), step=10.0, format="%.2f", key=f"edit_bill_val_{bill_id}")
+    c_dia = st.number_input("Dia do Vencimento no Mês (1-31) *", min_value=1, max_value=31, value=int(bill.get("due_day", 10)), step=1, key=f"edit_bill_dia_{bill_id}")
+
+    cur_active = int(bill.get("is_active", 1))
+    c_active = st.radio("Situação da Recorrência", ["Ativa (gerar mensalmente)", "Pausada"], index=0 if cur_active == 1 else 1, horizontal=True, key=f"edit_bill_act_{bill_id}")
+
+    st.markdown("---")
+    if st.button("💾 Salvar Alterações", type="primary", width="stretch", key=f"btn_salvar_bill_{bill_id}"):
+        if not c_desc.strip():
+            st.error("Por favor, preencha o campo Descrição.")
+            return
+
+        try:
+            is_active_val = 1 if "Ativa" in c_active else 0
+            ok = update_recurring_bill(
+                bill_id=bill_id,
+                requesting_user_id=user_id,
+                type=c_tipo,
+                category=c_cat,
+                description=c_desc.strip(),
+                amount=round(c_val, 2),
+                due_day=int(c_dia),
+                is_active=is_active_val
+            )
+            if ok:
+                st.success("✅ Conta recorrente atualizada com sucesso!")
+                st.rerun()
+            else:
+                st.error("Erro ao atualizar a conta recorrente.")
+        except Exception as e:
+            st.error(f"Erro ao atualizar: {e}")
+
 

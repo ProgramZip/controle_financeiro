@@ -7,11 +7,12 @@ from datetime import datetime, date
 from pathlib import Path
 
 from backend.crud import (
-    get_transactions, update_transaction_status, delete_transaction, delete_transactions_by_month,
+    get_transactions, update_transaction_status, revert_transaction_to_pending, delete_transaction, delete_transactions_by_month,
     add_recurring_bill, get_recurring_bills, update_recurring_bill, delete_recurring_bill, process_recurring_bills,
     add_investment, get_investments, update_investment, delete_investment,
     set_budget, get_budgets, delete_budget,
     get_users, add_user, update_user_role, delete_user,
+    change_user_password, admin_set_user_password,
     add_user_share, get_user_shares_by_owner, get_user_shares_received, delete_user_share,
     can_user_edit_resource
 )
@@ -22,7 +23,10 @@ from backend.utils import (
     export_transactions_to_excel, analyze_finances_with_ai,
     BASE_DIR
 )
-from frontend.components import render_metric_card, modal_nova_movimentacao, modal_nova_conta_recorrente
+from frontend.components import (
+    render_metric_card, modal_nova_movimentacao, modal_nova_conta_recorrente,
+    modal_editar_movimentacao, modal_editar_conta_recorrente
+)
 
 
 # =====================================================================
@@ -152,12 +156,27 @@ def view_movimentacoes(user: dict):
     # Carrega transações estritamente particulares do próprio usuário
     all_trans = get_transactions(user_id=user["id"])
 
-    # Ações no topo: Nova Movimentação e Exportar Excel
-    col_topo1, col_topo2, col_topo3 = st.columns([2, 1, 1])
-    with col_topo2:
+    # Seletor de Período e Ações no topo
+    col_per, col_nova, col_exp = st.columns([2, 1, 1])
+
+    hoje = date.today()
+    mes_atual_str = hoje.strftime("%Y-%m")
+    meses_com_dados = sorted(list(set(str(t["due_date"])[:7] for t in all_trans if t.get("due_date"))), reverse=True)
+    if mes_atual_str not in meses_com_dados:
+        meses_com_dados.insert(0, mes_atual_str)
+    opcoes_periodo = ["Todos os Lançamentos"] + meses_com_dados
+
+    with col_per:
+        periodo_sel = st.selectbox("📅 Período / Mês de Referência", opcoes_periodo, index=0, key="sel_periodo_mov")
+
+    with col_nova:
+        st.write("")
+        st.write("")
         if st.button("➕ Nova Movimentação", type="primary", width='stretch', key="btn_view_nova_mov"):
             modal_nova_movimentacao(user["id"])
-    with col_topo3:
+    with col_exp:
+        st.write("")
+        st.write("")
         excel_bytes = export_transactions_to_excel(all_trans)
         st.download_button(
             label="📥 Exportar Excel",
@@ -167,14 +186,45 @@ def view_movimentacoes(user: dict):
             width='stretch'
         )
 
+    # Filtragem das transações pelo período selecionado
+    if periodo_sel == "Todos os Lançamentos":
+        trans_ativas = all_trans
+        sub_periodo = "Geral acumulado"
+    else:
+        trans_ativas = [t for t in all_trans if str(t.get("due_date", ""))[:7] == periodo_sel]
+        sub_periodo = f"Mês {periodo_sel}"
+
+    despesas_ativas = [t for t in trans_ativas if t["type"] == "despesa"]
+    receitas_ativas = [t for t in trans_ativas if t["type"] == "receita"]
+
+    total_despesas = sum(t["amount"] for t in despesas_ativas)
+    total_receitas = sum(t["amount"] for t in receitas_ativas)
+
+    # ---------------- CARDS DE RESUMO (DESPESAS E RECEITAS) ----------------
+    col_card1, col_card2 = st.columns(2)
+    with col_card1:
+        render_metric_card(
+            title="Total das Despesas Adicionadas",
+            value=f"R$ {total_despesas:,.2f}",
+            sub=f"{len(despesas_ativas)} despesa(s) ({sub_periodo})",
+            color="#f85149",
+            icon="🔴"
+        )
+    with col_card2:
+        render_metric_card(
+            title="Total das Receitas Adicionadas",
+            value=f"R$ {total_receitas:,.2f}",
+            sub=f"{len(receitas_ativas)} receita(s) ({sub_periodo})",
+            color="#3fb950",
+            icon="🟢"
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
     # ---------------- ZONA DE EXCLUSÃO EM LOTE (MÊS COMPLETO) ----------------
     with st.expander("🗑️ Exclusão em Lote: Apagar Mês Completo", expanded=False):
         st.markdown("##### ⚠️ Excluir Todos os Lançamentos de um Mês")
         st.caption("Esta operação remove definitivamente todas as receitas e despesas do mês selecionado pertencentes à sua conta.")
-
-        meses_com_dados = sorted(list(set(str(t["due_date"])[:7] for t in all_trans if t.get("due_date"))), reverse=True)
-        if not meses_com_dados:
-            meses_com_dados = [date.today().strftime("%Y-%m")]
 
         col_dm1, col_dm2 = st.columns([2, 2])
         with col_dm1:
@@ -198,7 +248,7 @@ def view_movimentacoes(user: dict):
     # ---------------- ABA DESPESAS ----------------
     with tab_despesas:
         st.subheader("Despesas")
-        despesas = [t for t in all_trans if t["type"] == "despesa"]
+        despesas = [t for t in trans_ativas if t["type"] == "despesa"]
 
         # Filtros rápidos
         col_f1, col_f2 = st.columns([2, 2])
@@ -220,7 +270,7 @@ def view_movimentacoes(user: dict):
         if desp_pendentes:
             for item in desp_pendentes:
                 with st.container():
-                    c_info, c_val, c_btn, c_del = st.columns([4, 2, 2, 2])
+                    c_info, c_val, c_btn, c_edit, c_del = st.columns([4, 2, 1.5, 1.5, 1.5])
                     with c_info:
                         parc_info = f" ({item['installment_current']}/{item['installment_total']})" if item["installment_total"] > 1 else ""
                         st.markdown(f"**{item['description']}**{parc_info}  \n<small style='color:#8b949e;'>Vence em: {item['due_date']} | Categoria: {item['category']}</small>", unsafe_allow_html=True)
@@ -234,6 +284,9 @@ def view_movimentacoes(user: dict):
                             update_transaction_status(item["id"], "Pago", requesting_user_id=user["id"])
                             st.success("Conta quitada!")
                             st.rerun()
+                    with c_edit:
+                        if st.button("✏️ Alterar", key=f"edit_dp_{item['id']}", width='stretch'):
+                            modal_editar_movimentacao(item, user["id"])
                     with c_del:
                         if st.button("🗑️ Apagar", key=f"del_dp_{item['id']}", width='stretch'):
                             delete_transaction(item["id"], user_id=user["id"])
@@ -249,12 +302,20 @@ def view_movimentacoes(user: dict):
             st.caption(f"Total: {len(desp_pagas)} conta(s) paga(s) somando **R$ {total_pago:,.2f}**")
             for item in desp_pagas:
                 with st.container():
-                    c_info, c_val, c_del = st.columns([6, 3, 2])
+                    c_info, c_val, c_rev, c_edit, c_del = st.columns([4, 2, 1.5, 1.5, 1.5])
                     with c_info:
                         parc_info = f" ({item['installment_current']}/{item['installment_total']})" if item.get('installment_total', 1) > 1 else ""
                         st.markdown(f"**{item['description']}**{parc_info}  \n<small style='color:#8b949e;'>Pago em: {item['due_date']} | Categoria: {item['category']} | {item.get('payment_method', 'À Vista')}</small>", unsafe_allow_html=True)
                     with c_val:
                         st.markdown(f"<h4 style='color:#f85149; margin:0;'>R$ {item['amount']:,.2f}</h4>", unsafe_allow_html=True)
+                    with c_rev:
+                        if st.button("🔄 Retornar", key=f"rev_paga_{item['id']}", width='stretch', help="Reverter status desta conta para Pendente"):
+                            revert_transaction_to_pending(item["id"], requesting_user_id=user["id"])
+                            st.success("Conta retornada para Pendentes!")
+                            st.rerun()
+                    with c_edit:
+                        if st.button("✏️ Alterar", key=f"edit_paga_{item['id']}", width='stretch'):
+                            modal_editar_movimentacao(item, user["id"])
                     with c_del:
                         if st.button("🗑️ Apagar", key=f"del_paga_{item['id']}", width='stretch'):
                             delete_transaction(item["id"], user_id=user["id"])
@@ -267,7 +328,7 @@ def view_movimentacoes(user: dict):
     # ---------------- ABA RECEITAS ----------------
     with tab_receitas:
         st.subheader("Receitas")
-        receitas = [t for t in all_trans if t["type"] == "receita"]
+        receitas = [t for t in trans_ativas if t["type"] == "receita"]
 
         col_rf1, col_rf2 = st.columns([2, 2])
         with col_rf1:
@@ -287,7 +348,7 @@ def view_movimentacoes(user: dict):
         if rec_pendentes:
             for item in rec_pendentes:
                 with st.container():
-                    c_info, c_val, c_btn, c_del = st.columns([4, 2, 2, 2])
+                    c_info, c_val, c_btn, c_edit, c_del = st.columns([4, 2, 1.5, 1.5, 1.5])
                     with c_info:
                         st.markdown(f"**{item['description']}**  \n<small style='color:#8b949e;'>Previsão: {item['due_date']} | Categoria: {item['category']}</small>", unsafe_allow_html=True)
                     with c_val:
@@ -297,6 +358,9 @@ def view_movimentacoes(user: dict):
                             update_transaction_status(item["id"], "Recebido", requesting_user_id=user["id"])
                             st.success("Recebimento confirmado!")
                             st.rerun()
+                    with c_edit:
+                        if st.button("✏️ Alterar", key=f"edit_rp_{item['id']}", width='stretch'):
+                            modal_editar_movimentacao(item, user["id"])
                     with c_del:
                         if st.button("🗑️ Apagar", key=f"del_rp_{item['id']}", width='stretch'):
                             delete_transaction(item["id"], user_id=user["id"])
@@ -312,11 +376,19 @@ def view_movimentacoes(user: dict):
             st.caption(f"Total: {len(rec_recebidas)} recebimento(s) somando **R$ {total_rec:,.2f}**")
             for item in rec_recebidas:
                 with st.container():
-                    c_info, c_val, c_del = st.columns([6, 3, 2])
+                    c_info, c_val, c_rev, c_edit, c_del = st.columns([4, 2, 1.5, 1.5, 1.5])
                     with c_info:
                         st.markdown(f"**{item['description']}**  \n<small style='color:#8b949e;'>Recebido em: {item['due_date']} | Categoria: {item['category']}</small>", unsafe_allow_html=True)
                     with c_val:
                         st.markdown(f"<h4 style='color:#3fb950; margin:0;'>R$ {item['amount']:,.2f}</h4>", unsafe_allow_html=True)
+                    with c_rev:
+                        if st.button("🔄 Retornar", key=f"rev_rec_{item['id']}", width='stretch', help="Reverter status desta receita para Pendente"):
+                            revert_transaction_to_pending(item["id"], requesting_user_id=user["id"])
+                            st.success("Receita retornada para Pendentes!")
+                            st.rerun()
+                    with c_edit:
+                        if st.button("✏️ Alterar", key=f"edit_rec_paga_{item['id']}", width='stretch'):
+                            modal_editar_movimentacao(item, user["id"])
                     with c_del:
                         if st.button("🗑️ Apagar", key=f"del_rec_paga_{item['id']}", width='stretch'):
                             delete_transaction(item["id"], user_id=user["id"])
@@ -355,7 +427,7 @@ def view_contas_mensais(user: dict):
     if contas:
         for b in contas:
             with st.container():
-                c_icon, c_info, c_val, c_status, c_del = st.columns([1, 4, 2, 2, 2])
+                c_icon, c_info, c_val, c_status, c_edit, c_del = st.columns([0.6, 3.4, 2, 1.5, 1.5, 1.5])
                 with c_icon:
                     st.markdown("🔴" if b["type"] == "despesa" else "🟢")
                 with c_info:
@@ -370,6 +442,9 @@ def view_contas_mensais(user: dict):
                     if st.button(btn_txt, key=f"tgl_{b['id']}", width="stretch"):
                         update_recurring_bill(b["id"], requesting_user_id=user["id"], is_active=novo_estado)
                         st.rerun()
+                with c_edit:
+                    if st.button("✏️ Alterar", key=f"edit_rec_{b['id']}", width="stretch"):
+                        modal_editar_conta_recorrente(b, user["id"])
                 with c_del:
                     if st.button("🗑️ Apagar", key=f"del_rec_{b['id']}", width="stretch"):
                         delete_recurring_bill(b["id"], requesting_user_id=user["id"])
@@ -761,6 +836,35 @@ def view_consultor_configuracoes(user: dict):
                     else:
                         st.error(msg)
 
+        # ---------------- SEÇÃO: SEGURANÇA & ALTERAÇÃO DE SENHA ----------------
+        st.markdown("---")
+        st.subheader("🔐 Segurança & Alteração de Senha")
+        st.write(f"Altere a sua senha de acesso ao sistema (Usuário conectado: **{user['username']}**).")
+
+        with st.form("form_alterar_propria_senha"):
+            col_s1, col_s2, col_s3 = st.columns(3)
+            with col_s1:
+                senha_atual = st.text_input("Senha Atual", type="password", key="sec_curr_pass")
+            with col_s2:
+                nova_senha = st.text_input("Nova Senha", type="password", help="Mínimo de 4 caracteres", key="sec_new_pass")
+            with col_s3:
+                confirma_nova = st.text_input("Confirmar Nova Senha", type="password", key="sec_conf_pass")
+
+            btn_trocar_senha = st.form_submit_button("Atualizar Minha Senha", type="primary")
+            if btn_trocar_senha:
+                if not senha_atual:
+                    st.error("Por favor, informe sua senha atual.")
+                elif len(nova_senha.strip()) < 4:
+                    st.error("A nova senha deve ter no mínimo 4 caracteres.")
+                elif nova_senha != confirma_nova:
+                    st.error("A nova senha e a confirmação não coincidem.")
+                else:
+                    ok, msg = change_user_password(user["id"], senha_atual, nova_senha)
+                    if ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+
         # Gestão de Usuários (Apenas Admin)
         if user.get("role") == "admin":
             st.markdown("---")
@@ -768,18 +872,43 @@ def view_consultor_configuracoes(user: dict):
             users = get_users()
             st.dataframe(pd.DataFrame(users)[["id", "username", "role", "created_at"]], width='stretch', hide_index=True)
 
-            with st.expander("➕ Criar Novo Usuário"):
-                with st.form("form_novo_user"):
-                    u_name = st.text_input("Nome de Usuário")
-                    u_pass = st.text_input("Senha", type="password")
-                    u_role = st.selectbox("Perfil / Permissão", ["editor", "viewer", "admin"])
-                    if st.form_submit_button("Criar Usuário"):
-                        if u_name.strip() and u_pass.strip():
-                            try:
-                                add_user(u_name.strip(), u_pass.strip(), u_role)
-                                st.success(f"Usuário '{u_name}' criado com sucesso!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Erro ao criar usuário: {e}")
-                        else:
-                            st.error("Preencha todos os campos.")
+            col_adm_u1, col_adm_u2 = st.columns(2)
+            with col_adm_u1:
+                with st.expander("➕ Criar Novo Usuário"):
+                    with st.form("form_novo_user"):
+                        u_name = st.text_input("Nome de Usuário")
+                        u_pass = st.text_input("Senha Inicial", type="password")
+                        u_role = st.selectbox("Perfil / Permissão", ["editor", "viewer", "admin"])
+                        if st.form_submit_button("Criar Usuário", type="primary"):
+                            if u_name.strip() and u_pass.strip():
+                                try:
+                                    add_user(u_name.strip(), u_pass.strip(), u_role)
+                                    st.success(f"Usuário '{u_name}' criado com sucesso!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro ao criar usuário: {e}")
+                            else:
+                                st.error("Preencha todos os campos.")
+
+            with col_adm_u2:
+                with st.expander("🔑 Redefinir Senha de Usuário (Admin)"):
+                    with st.form("form_admin_reset_senha"):
+                        users_list = get_users()
+                        map_users_reset = {f"{u['username']} (ID: {u['id']} - {u['role'].upper()})": u["id"] for u in users_list}
+                        sel_user_label = st.selectbox("Usuário Alvo", list(map_users_reset.keys()), key="adm_reset_target")
+                        target_user_id = map_users_reset[sel_user_label]
+                        adm_new_pass = st.text_input("Nova Senha", type="password", key="adm_new_pass")
+                        adm_conf_pass = st.text_input("Confirmar Senha", type="password", key="adm_conf_pass")
+
+                        if st.form_submit_button("Redefinir Senha"):
+                            if len(adm_new_pass.strip()) < 4:
+                                st.error("A nova senha deve ter no mínimo 4 caracteres.")
+                            elif adm_new_pass != adm_conf_pass:
+                                st.error("As senhas não coincidem.")
+                            else:
+                                ok, msg = admin_set_user_password(user["id"], target_user_id, adm_new_pass)
+                                if ok:
+                                    st.success(msg)
+                                else:
+                                    st.error(msg)
+

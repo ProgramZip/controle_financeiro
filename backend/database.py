@@ -160,6 +160,46 @@ def verify_user(username: str, password: str):
         return dict(row) if row else None
 
 
+def update_user_password(user_id: int, new_password: str) -> bool:
+    """Atualiza a senha do usuário gravando o novo hash SHA-256."""
+    if not new_password or len(new_password.strip()) < 4:
+        raise ValueError("A nova senha deve ter pelo menos 4 caracteres.")
+    pwd_hash = hash_password(new_password.strip())
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pwd_hash, int(user_id)))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def change_password_with_verification(user_id: int, current_password: str, new_password: str) -> tuple[bool, str]:
+    """
+    Valida a senha atual do usuário e, se correta, atualiza para a nova senha com hash SHA-256.
+    Retorna uma tupla (sucesso: bool, mensagem: str).
+    """
+    if not current_password:
+        return False, "Informe a senha atual."
+    if not new_password or len(new_password.strip()) < 4:
+        return False, "A nova senha deve ter no mínimo 4 caracteres."
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT password_hash FROM users WHERE id = ?", (int(user_id),))
+        row = cursor.fetchone()
+        if not row:
+            return False, "Usuário não encontrado."
+
+        current_hash = hash_password(current_password.strip())
+        if row["password_hash"] != current_hash:
+            return False, "A senha atual informada está incorreta."
+
+        new_hash = hash_password(new_password.strip())
+        cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, int(user_id)))
+        conn.commit()
+        return True, "Senha alterada com sucesso!"
+
+
 if __name__ == "__main__":
     init_db()
     print("Banco de dados financas.db inicializado com sucesso!")
+
