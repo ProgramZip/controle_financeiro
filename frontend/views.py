@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
 from backend.crud import (
@@ -14,7 +14,7 @@ from backend.crud import (
     get_users, add_user, update_user_role, delete_user,
     change_user_password, admin_set_user_password,
     add_user_share, get_user_shares_by_owner, get_user_shares_received, delete_user_share,
-    can_user_edit_resource
+    can_user_edit_resource, update_user_profile, get_user_profile
 )
 from backend.utils import (
     CATEGORIAS_DESPESA, CATEGORIAS_RECEITA,
@@ -25,7 +25,8 @@ from backend.utils import (
 )
 from frontend.components import (
     render_metric_card, modal_nova_movimentacao, modal_nova_conta_recorrente,
-    modal_editar_movimentacao, modal_editar_conta_recorrente
+    modal_editar_movimentacao, modal_editar_conta_recorrente,
+    modal_excluir_mes_completo, render_unified_filter_popover
 )
 
 
@@ -33,8 +34,150 @@ from frontend.components import (
 # 1. VIEW: DASHBOARD GERAL
 # =====================================================================
 
+def _render_alert_item_row(item: dict, user_id: int):
+    """Renderiza uma linha individual de conta no card de alerta com botão de quitação rápida."""
+    c_info, c_val, c_btn = st.columns([5.5, 2.5, 2])
+    with c_info:
+        parc = f" ({item['installment_current']}/{item['installment_total']})" if item.get("installment_total", 1) > 1 else ""
+        badge = f"<span style='background-color:{item['tag_bg']}; color:{item['tag_color']}; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; margin-right: 6px;'>{item['tag_label']}</span>"
+        st.markdown(f"{badge} **{item['description']}**{parc}  \n<small style='color:#8b949e;'>Vencimento: {item['due_date']} | Categoria: {item['category']}</small>", unsafe_allow_html=True)
+    with c_val:
+        st.markdown(f"<h4 style='color:#f85149; margin: 0.2rem 0;'>R$ {item['amount']:,.2f}</h4>", unsafe_allow_html=True)
+    with c_btn:
+        if st.button("✅ Quitar", key=f"quick_pay_dash_{item['id']}", width="stretch", help="Marcar conta como Paga imediatamente"):
+            update_transaction_status(item["id"], "Pago", requesting_user_id=user_id)
+            st.toast(f"Conta '{item['description']}' quitada com sucesso!", icon="✅")
+            st.rerun()
+
+
+def render_due_date_alerts(user: dict):
+    """
+    Renderiza um card/banner de destaque no topo do Dashboard Geral alertando
+    sobre contas pendentes de vencimento hoje ou nos próximos 3 dias (e contas em atraso),
+    com botão de quitação rápida em 1 clique.
+    """
+    hoje = date.today()
+    limite_3dias = hoje + timedelta(days=3)
+
+    # Busca despesas pendentes estritamente do usuário logado
+    pendentes = get_transactions(
+        user_id=user["id"],
+        trans_type="despesa",
+        status="Pendente"
+    )
+
+    alert_items = []
+    for item in pendentes:
+        raw_date = item.get("due_date")
+        if not raw_date:
+            continue
+        try:
+            d_date = date.fromisoformat(str(raw_date)[:10])
+        except Exception:
+            continue
+
+        if d_date <= limite_3dias:
+            dias_dif = (d_date - hoje).days
+            if dias_dif < 0:
+                tag_label = f"Vencida há {abs(dias_dif)}d"
+                tag_bg = "#f85149"
+                tag_color = "#ffffff"
+                urgency = 0
+            elif dias_dif == 0:
+                tag_label = "Vence Hoje!"
+                tag_bg = "#e3b341"
+                tag_color = "#000000"
+                urgency = 1
+            elif dias_dif == 1:
+                tag_label = "Vence Amanhã"
+                tag_bg = "#58a6ff"
+                tag_color = "#ffffff"
+                urgency = 2
+            else:
+                tag_label = f"Vence em {dias_dif}d"
+                tag_bg = "#388bfd"
+                tag_color = "#ffffff"
+                urgency = 3
+
+            alert_items.append({
+                **item,
+                "d_date": d_date,
+                "dias_dif": dias_dif,
+                "tag_label": tag_label,
+                "tag_bg": tag_bg,
+                "tag_color": tag_color,
+                "urgency": urgency
+            })
+
+    if not alert_items:
+        return
+
+    # Ordena por urgência (atrasadas primeiro, depois hoje, depois próximos dias) e data
+    alert_items.sort(key=lambda x: (x["urgency"], x["d_date"], -x["amount"]))
+
+    qtd_total = len(alert_items)
+    valor_total = sum(i["amount"] for i in alert_items)
+    atrasadas = sum(1 for i in alert_items if i["dias_dif"] < 0)
+    hoje_count = sum(1 for i in alert_items if i["dias_dif"] == 0)
+
+    # Subtítulo explicativo
+    sub_parts = []
+    if atrasadas > 0:
+        sub_parts.append(f"{atrasadas} em atraso")
+    if hoje_count > 0:
+        sub_parts.append(f"{hoje_count} vencendo hoje")
+    proximos_count = qtd_total - atrasadas - hoje_count
+    if proximos_count > 0:
+        sub_parts.append(f"{proximos_count} nos próximos 3 dias")
+    sub_text = " • ".join(sub_parts)
+
+    cor_borda = "#f85149" if atrasadas > 0 else "#e3b341"
+    icone = "🚨" if atrasadas > 0 else "⚠️"
+
+    st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, rgba(227, 179, 65, 0.12), rgba(248, 81, 73, 0.08));
+            border: 1px solid {cor_borda};
+            border-left: 6px solid {cor_borda};
+            border-radius: 12px;
+            padding: 1rem 1.25rem 0.8rem 1.25rem;
+            margin-bottom: 1.2rem;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+        ">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                <div>
+                    <h4 style="margin: 0; color: #ffffff; font-size: 1.05rem; display: flex; align-items: center; gap: 8px;">
+                        <span>{icone}</span> <span>Alerta de Vencimentos Imediatos</span>
+                    </h4>
+                    <p style="margin: 4px 0 0 0; color: #c9d1d9; font-size: 0.9rem;">
+                        Você possui <b>{qtd_total}</b> conta(s) a pagar somando <b style="color: #f85149;">R$ {valor_total:,.2f}</b> ({sub_text}).
+                    </p>
+                </div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Renderiza as contas com quitação rápida
+    top_items = alert_items[:3]
+    rest_items = alert_items[3:]
+
+    with st.container():
+        for item in top_items:
+            _render_alert_item_row(item, user["id"])
+
+        if rest_items:
+            with st.expander(f"➕ Ver outras {len(rest_items)} conta(s) com vencimento próximo"):
+                for item in rest_items:
+                    _render_alert_item_row(item, user["id"])
+
+    st.markdown("<div style='margin-bottom: 1rem;'></div>", unsafe_allow_html=True)
+
+
 def view_dashboard(user: dict):
     st.title("📊 Painel Financeiro")
+
+    # Alerta de Vencimento Imediato no topo do Dashboard
+    render_due_date_alerts(user)
 
     # Seletor de período e Ação Rápida
     col_per1, col_per2 = st.columns([3, 1])
@@ -156,28 +299,25 @@ def view_movimentacoes(user: dict):
     # Carrega transações estritamente particulares do próprio usuário
     all_trans = get_transactions(user_id=user["id"])
 
-    # Seletor de Período e Ações no topo
-    col_per, col_nova, col_exp = st.columns([2, 1, 1])
-
+    # Ações e Filtros no topo (Responsivo Desktop & Mobile)
     hoje = date.today()
     mes_atual_str = hoje.strftime("%Y-%m")
     meses_com_dados = sorted(list(set(str(t["due_date"])[:7] for t in all_trans if t.get("due_date"))), reverse=True)
     if mes_atual_str not in meses_com_dados:
         meses_com_dados.insert(0, mes_atual_str)
-    opcoes_periodo = ["Todos os Lançamentos"] + meses_com_dados
 
-    with col_per:
-        periodo_sel = st.selectbox("📅 Período / Mês de Referência", opcoes_periodo, index=0, key="sel_periodo_mov")
+    col_filtros, col_del, col_nova, col_exp = st.columns([1.5, 1.2, 1.4, 1.2])
 
+    with col_filtros:
+        trans_ativas = render_unified_filter_popover(all_trans, meses_com_dados, key_prefix="mov_filters")
+    with col_del:
+        if st.button("🗑️ Excluir Mês", width="stretch", help="Exclusão em lote por modal seguro"):
+            modal_excluir_mes_completo(user["id"], meses_com_dados)
     with col_nova:
-        st.write("")
-        st.write("")
         if st.button("➕ Nova Movimentação", type="primary", width='stretch', key="btn_view_nova_mov"):
             modal_nova_movimentacao(user["id"])
     with col_exp:
-        st.write("")
-        st.write("")
-        excel_bytes = export_transactions_to_excel(all_trans)
+        excel_bytes = export_transactions_to_excel(trans_ativas)
         st.download_button(
             label="📥 Exportar Excel",
             data=excel_bytes,
@@ -185,14 +325,6 @@ def view_movimentacoes(user: dict):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width='stretch'
         )
-
-    # Filtragem das transações pelo período selecionado
-    if periodo_sel == "Todos os Lançamentos":
-        trans_ativas = all_trans
-        sub_periodo = "Geral acumulado"
-    else:
-        trans_ativas = [t for t in all_trans if str(t.get("due_date", ""))[:7] == periodo_sel]
-        sub_periodo = f"Mês {periodo_sel}"
 
     despesas_ativas = [t for t in trans_ativas if t["type"] == "despesa"]
     receitas_ativas = [t for t in trans_ativas if t["type"] == "receita"]
@@ -204,43 +336,22 @@ def view_movimentacoes(user: dict):
     col_card1, col_card2 = st.columns(2)
     with col_card1:
         render_metric_card(
-            title="Total das Despesas Adicionadas",
+            title="Total das Despesas Filtradas",
             value=f"R$ {total_despesas:,.2f}",
-            sub=f"{len(despesas_ativas)} despesa(s) ({sub_periodo})",
+            sub=f"{len(despesas_ativas)} despesa(s) ativa(s)",
             color="#f85149",
             icon="🔴"
         )
     with col_card2:
         render_metric_card(
-            title="Total das Receitas Adicionadas",
+            title="Total das Receitas Filtradas",
             value=f"R$ {total_receitas:,.2f}",
-            sub=f"{len(receitas_ativas)} receita(s) ({sub_periodo})",
+            sub=f"{len(receitas_ativas)} receita(s) ativa(s)",
             color="#3fb950",
             icon="🟢"
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
-
-    # ---------------- ZONA DE EXCLUSÃO EM LOTE (MÊS COMPLETO) ----------------
-    with st.expander("🗑️ Exclusão em Lote: Apagar Mês Completo", expanded=False):
-        st.markdown("##### ⚠️ Excluir Todos os Lançamentos de um Mês")
-        st.caption("Esta operação remove definitivamente todas as receitas e despesas do mês selecionado pertencentes à sua conta.")
-
-        col_dm1, col_dm2 = st.columns([2, 2])
-        with col_dm1:
-            mes_del_sel = st.selectbox("Selecione o Mês a Excluir (YYYY-MM)", meses_com_dados, key="sel_mes_excluir")
-            total_no_mes = len([t for t in all_trans if str(t.get("due_date", ""))[:7] == mes_del_sel])
-            st.warning(f"Total encontrado em **{mes_del_sel}**: **{total_no_mes}** movimentação(ões).")
-        with col_dm2:
-            st.write("")
-            st.write("")
-            confirm_chk = st.checkbox(f"Confirmo que desejo apagar permanentemente todas as {total_no_mes} movimentações de {mes_del_sel}.", key="chk_conf_del_mes")
-            if st.button("🗑️ Apagar Mês Completo", type="primary", width="stretch", disabled=not confirm_chk or total_no_mes == 0):
-                apagados = delete_transactions_by_month(user["id"], mes_del_sel)
-                st.success(f"✅ {apagados} movimentação(ões) de {mes_del_sel} foram excluídas com sucesso!")
-                st.rerun()
-
-    st.markdown("---")
 
     # Abas: Despesas e Receitas
     tab_despesas, tab_receitas = st.tabs(["🔴 Despesas", "🟢 Receitas"])
@@ -248,19 +359,7 @@ def view_movimentacoes(user: dict):
     # ---------------- ABA DESPESAS ----------------
     with tab_despesas:
         st.subheader("Despesas")
-        despesas = [t for t in trans_ativas if t["type"] == "despesa"]
-
-        # Filtros rápidos
-        col_f1, col_f2 = st.columns([2, 2])
-        with col_f1:
-            cat_filter = st.selectbox("Filtrar por Categoria", ["Todas"] + CATEGORIAS_DESPESA, key="filter_cat_desp")
-        with col_f2:
-            busca_desp = st.text_input("Buscar por descrição", placeholder="Digite algo...", key="busca_desp")
-
-        if cat_filter != "Todas":
-            despesas = [d for d in despesas if d["category"] == cat_filter]
-        if busca_desp.strip():
-            despesas = [d for d in despesas if busca_desp.lower() in d["description"].lower()]
+        despesas = despesas_ativas
 
         # Separação: Pendentes e Pagas
         desp_pendentes = [d for d in despesas if d["status"] == "Pendente"]
@@ -328,19 +427,7 @@ def view_movimentacoes(user: dict):
     # ---------------- ABA RECEITAS ----------------
     with tab_receitas:
         st.subheader("Receitas")
-        receitas = [t for t in trans_ativas if t["type"] == "receita"]
-
-        col_rf1, col_rf2 = st.columns([2, 2])
-        with col_rf1:
-            cat_r_filter = st.selectbox("Filtrar por Categoria", ["Todas"] + CATEGORIAS_RECEITA, key="filter_cat_rec")
-        with col_rf2:
-            busca_rec = st.text_input("Buscar por descrição", placeholder="Digite algo...", key="busca_rec")
-
-        if cat_r_filter != "Todas":
-            receitas = [r for r in receitas if r["category"] == cat_r_filter]
-        if busca_rec.strip():
-            receitas = [r for r in receitas if busca_rec.lower() in r["description"].lower()]
-
+        receitas = receitas_ativas
         rec_pendentes = [r for r in receitas if r["status"] == "Pendente"]
         rec_recebidas = [r for r in receitas if r["status"] in ("Recebido", "Pago")]
 
@@ -407,52 +494,130 @@ def view_contas_mensais(user: dict):
     st.title("🔄 Matriz de Contas Mensais Recorrentes")
     st.write("Gerencie suas contas fixas e receitas automáticas. O motor de recorrência gera os lançamentos todo mês com trava anti-duplicação.")
 
-    # Ações de Topo: Nova Conta Recorrente (Modal) e Sincronização
-    col_m1, col_m2, col_m3 = st.columns([2, 1, 1])
-    with col_m2:
-        if st.button("➕ Nova Conta Recorrente", type="primary", width='stretch', key="btn_nova_recorrente"):
-            modal_nova_conta_recorrente(user["id"])
-    with col_m3:
+    # Carrega contas recorrentes do usuário
+    all_contas = get_recurring_bills(user_id=user["id"])
+
+    # Ações de Topo: Popover de Filtros Globais, Nova Conta Recorrente (Modal) e Sincronização
+    col_filtros, col_sync, col_nova = st.columns([1.5, 1.3, 1.4])
+    with col_filtros:
+        contas_ativas = render_unified_filter_popover(
+            all_contas, 
+            available_months=[], 
+            key_prefix="contas_filters", 
+            show_categories=True
+        )
+    with col_sync:
         if st.button("⚡ Sincronizar Mês Vigente", width='stretch', key="btn_sync_recorrente"):
-            novas = process_recurring_bills(user_id=user["id"])
+            novas = process_recurring_bills(user_id=user["id"], force_manual=True)
             if novas > 0:
                 st.success(f"{novas} conta(s) gerada(s) para o mês atual!")
             else:
                 st.info("Todas as contas do mês já estão atualizadas. Nenhuma duplicidade gerada.")
             st.rerun()
+    with col_nova:
+        if st.button("➕ Nova Conta Recorrente", type="primary", width='stretch', key="btn_nova_recorrente"):
+            modal_nova_conta_recorrente(user["id"])
 
-    st.markdown("---")
-    contas = get_recurring_bills(user_id=user["id"])
+    # Separação de Despesas e Receitas Fixas
+    desp_fixas = [b for b in contas_ativas if b.get("type", "despesa") == "despesa"]
+    rec_fixas = [b for b in contas_ativas if b.get("type") == "receita"]
 
-    if contas:
-        for b in contas:
-            with st.container():
-                c_icon, c_info, c_val, c_status, c_edit, c_del = st.columns([0.6, 3.4, 2, 1.5, 1.5, 1.5])
-                with c_icon:
-                    st.markdown("🔴" if b["type"] == "despesa" else "🟢")
-                with c_info:
-                    st.markdown(f"**{b['description']}**  \n<small style='color:#8b949e;'>Dia de vencimento: {b['due_day']} | Categoria: {b['category']}</small>", unsafe_allow_html=True)
-                with c_val:
-                    cor = "#f85149" if b["type"] == "despesa" else "#3fb950"
-                    st.markdown(f"<h4 style='color:{cor}; margin:0;'>R$ {b['amount']:,.2f}</h4>", unsafe_allow_html=True)
-                
-                with c_status:
-                    novo_estado = 0 if b["is_active"] else 1
-                    btn_txt = "⏸️ Pausar" if b["is_active"] else "▶️ Ativar"
-                    if st.button(btn_txt, key=f"tgl_{b['id']}", width="stretch"):
-                        update_recurring_bill(b["id"], requesting_user_id=user["id"], is_active=novo_estado)
-                        st.rerun()
-                with c_edit:
-                    if st.button("✏️ Alterar", key=f"edit_rec_{b['id']}", width="stretch"):
-                        modal_editar_conta_recorrente(b, user["id"])
-                with c_del:
-                    if st.button("🗑️ Apagar", key=f"del_rec_{b['id']}", width="stretch"):
-                        delete_recurring_bill(b["id"], requesting_user_id=user["id"])
-                        st.success("Conta recorrente excluída!")
-                        st.rerun()
-                st.divider()
-    else:
-        st.info("Nenhuma conta recorrente cadastrada. Use o botão acima para adicionar contas fixas.")
+    total_desp_fixas = sum(b["amount"] for b in desp_fixas if b.get("is_active", 1))
+    total_rec_fixas = sum(b["amount"] for b in rec_fixas if b.get("is_active", 1))
+
+    # ---------------- CARDS DE RESUMO (DESPESAS E RECEITAS FIXAS) ----------------
+    col_card1, col_card2 = st.columns(2)
+    with col_card1:
+        render_metric_card(
+            title="Total Despesas Fixas (Ativas)",
+            value=f"R$ {total_desp_fixas:,.2f}",
+            sub=f"{len([b for b in desp_fixas if b.get('is_active', 1)])} conta(s) ativa(s) | {len(desp_fixas)} cadastrada(s)",
+            color="#f85149",
+            icon="🔴"
+        )
+    with col_card2:
+        render_metric_card(
+            title="Total Receitas Fixas (Ativas)",
+            value=f"R$ {total_rec_fixas:,.2f}",
+            sub=f"{len([b for b in rec_fixas if b.get('is_active', 1)])} receita(s) ativa(s) | {len(rec_fixas)} cadastrada(s)",
+            color="#3fb950",
+            icon="🟢"
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Abas: Despesas e Receitas
+    tab_desp, tab_rec = st.tabs(["🔴 Contas a Pagar (Despesas Fixas)", "🟢 Receitas Fixas"])
+
+    # --- ABA DESPESAS FIXAS ---
+    with tab_desp:
+        st.subheader("Despesas Fixas")
+        if desp_fixas:
+            for b in desp_fixas:
+                with st.container():
+                    c_info, c_val, c_status, c_edit, c_del = st.columns([4, 2, 1.5, 1.5, 1.5])
+                    with c_info:
+                        status_badge = "🟢 Ativa" if b["is_active"] else "⏸️ Pausada"
+                        st.markdown(
+                            f"**{b['description']}** ({status_badge})  \n"
+                            f"<small style='color:#8b949e;'>Vencimento: Dia {b['due_day']} | Categoria: {b['category']}</small>",
+                            unsafe_allow_html=True
+                        )
+                    with c_val:
+                        cor = "#f85149" if b["is_active"] else "#8b949e"
+                        st.markdown(f"<h4 style='color:{cor}; margin:0;'>R$ {b['amount']:,.2f}</h4>", unsafe_allow_html=True)
+                    with c_status:
+                        novo_estado = 0 if b["is_active"] else 1
+                        btn_txt = "⏸️ Pausar" if b["is_active"] else "▶️ Ativar"
+                        if st.button(btn_txt, key=f"tgl_desp_{b['id']}", width="stretch"):
+                            update_recurring_bill(b["id"], requesting_user_id=user["id"], is_active=novo_estado)
+                            st.rerun()
+                    with c_edit:
+                        if st.button("✏️ Alterar", key=f"edit_rec_desp_{b['id']}", width="stretch"):
+                            modal_editar_conta_recorrente(b, user["id"])
+                    with c_del:
+                        if st.button("🗑️ Apagar", key=f"del_rec_desp_{b['id']}", width="stretch"):
+                            delete_recurring_bill(b["id"], requesting_user_id=user["id"])
+                            st.success("Conta recorrente excluída!")
+                            st.rerun()
+                    st.divider()
+        else:
+            st.info("Nenhuma despesa fixa recorrente cadastrada ou encontrada com os filtros.")
+
+    # --- ABA RECEITAS FIXAS ---
+    with tab_rec:
+        st.subheader("Receitas Fixas")
+        if rec_fixas:
+            for b in rec_fixas:
+                with st.container():
+                    c_info, c_val, c_status, c_edit, c_del = st.columns([4, 2, 1.5, 1.5, 1.5])
+                    with c_info:
+                        status_badge = "🟢 Ativa" if b["is_active"] else "⏸️ Pausada"
+                        st.markdown(
+                            f"**{b['description']}** ({status_badge})  \n"
+                            f"<small style='color:#8b949e;'>Recebimento: Dia {b['due_day']} | Categoria: {b['category']}</small>",
+                            unsafe_allow_html=True
+                        )
+                    with c_val:
+                        cor = "#3fb950" if b["is_active"] else "#8b949e"
+                        st.markdown(f"<h4 style='color:{cor}; margin:0;'>R$ {b['amount']:,.2f}</h4>", unsafe_allow_html=True)
+                    with c_status:
+                        novo_estado = 0 if b["is_active"] else 1
+                        btn_txt = "⏸️ Pausar" if b["is_active"] else "▶️ Ativar"
+                        if st.button(btn_txt, key=f"tgl_rec_{b['id']}", width="stretch"):
+                            update_recurring_bill(b["id"], requesting_user_id=user["id"], is_active=novo_estado)
+                            st.rerun()
+                    with c_edit:
+                        if st.button("✏️ Alterar", key=f"edit_rec_rec_{b['id']}", width="stretch"):
+                            modal_editar_conta_recorrente(b, user["id"])
+                    with c_del:
+                        if st.button("🗑️ Apagar", key=f"del_rec_rec_{b['id']}", width="stretch"):
+                            delete_recurring_bill(b["id"], requesting_user_id=user["id"])
+                            st.success("Receita recorrente excluída!")
+                            st.rerun()
+                    st.divider()
+        else:
+            st.info("Nenhuma receita fixa recorrente cadastrada ou encontrada com os filtros.")
 
 
 # =====================================================================
@@ -681,7 +846,7 @@ def view_investimentos_orcamentos(user: dict):
 def view_consultor_configuracoes(user: dict):
     st.title("🤖 Consultor Financeiro IA & Configurações")
 
-    tab_ia, tab_partilha, tab_conf = st.tabs(["💡 Consultor IA (Gemini)", "🤝 Partilhamento de Conta", "⚙️ Configurações & Backup"])
+    tab_ia, tab_conf = st.tabs(["💡 Consultor IA (Gemini)", "⚙️ Configurações, Perfil & Backup"])
 
     # ---------------- ABA CONSULTOR IA ----------------
     with tab_ia:
@@ -706,94 +871,41 @@ def view_consultor_configuracoes(user: dict):
                 st.markdown("### 📋 Diagnóstico da IA")
                 st.markdown(resposta)
 
-    # ---------------- ABA PARTILHAMENTO DE CONTA ----------------
-    with tab_partilha:
-        st.subheader("🤝 Gestão de Partilhamento de Conta")
-        st.write("Compartilhe o seu espaço financeiro com outro usuário cadastrado para planejamento conjunto, definindo o nível de acesso apropriado.")
-
-        # 1. Conceder novo compartilhamento
-        with st.expander("➕ Partilhar Meu Espaço com Outro Usuário", expanded=True):
-            todos_usuarios = get_users()
-            outros_usuarios = [u for u in todos_usuarios if u["id"] != user["id"]]
-
-            if outros_usuarios:
-                with st.form("form_novo_share"):
-                    map_users = {f"{u['username']} ({u['role'].upper()})": u["id"] for u in outros_usuarios}
-                    sel_user_label = st.selectbox("Selecione o Usuário para Compartilhar", list(map_users.keys()))
-                    sel_target_id = map_users[sel_user_label]
-
-                    sel_perm = st.selectbox(
-                        "Nível de Permissão",
-                        ["viewer", "editor"],
-                        format_func=lambda x: "👁️ Visualizador (Apenas Leitura)" if x == "viewer" else "✏️ Editor (Visualização e Edição)"
-                    )
-
-                    btn_compartilhar = st.form_submit_button("Partilhar Espaço", type="primary")
-                    if btn_compartilhar:
-                        try:
-                            add_user_share(owner_id=user["id"], shared_with_user_id=sel_target_id, permission_level=sel_perm)
-                            st.success(f"Espaço compartilhado com sucesso com {sel_user_label} como '{sel_perm}'!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao compartilhar espaço: {e}")
-            else:
-                st.info("Nenhum outro usuário cadastrado no sistema para compartilhar. Crie usuários na aba Configurações.")
-
-        st.markdown("---")
-
-        # 2. Compartilhamentos Concedidos por Mim
-        st.subheader("📤 Acessos que Você Concedeu")
-        minhas_partilhas = get_user_shares_by_owner(user["id"])
-        if minhas_partilhas:
-            for s in minhas_partilhas:
-                with st.container():
-                    c_user, c_perm, c_dt, c_rev = st.columns([3, 2, 2, 2])
-                    with c_user:
-                        st.markdown(f"**👤 {s['shared_with_username']}**")
-                    with c_perm:
-                        badge_color = "#3fb950" if s["permission_level"] == "editor" else "#58a6ff"
-                        lbl = "✏️ Editor" if s["permission_level"] == "editor" else "👁️ Visualizador"
-                        st.markdown(f"<span style='color:{badge_color}; font-weight:600;'>{lbl}</span>", unsafe_allow_html=True)
-                    with c_dt:
-                        st.caption(f"Desde: {s['created_at'][:10]}")
-                    with c_rev:
-                        if st.button("🗑️ Revogar", key=f"rev_{s['id']}", width="stretch"):
-                            delete_user_share(s["id"], owner_id=user["id"])
-                            st.success("Compartilhamento revogado com sucesso!")
-                            st.rerun()
-                    st.divider()
-        else:
-            st.info("Você ainda não compartilhou seu espaço com nenhum usuário.")
-
-        st.markdown("---")
-
-        # 3. Consulta Específica de Espaços Compartilhados Recebidos
-        st.subheader("📥 Consulta Específica de Espaços Compartilhados")
-        partilhas_recebidas = get_user_shares_received(user["id"])
-        if partilhas_recebidas:
-            st.write("Visualize os lançamentos e contas de outros usuários que concederam acesso a você (mantidos segregados do seu espaço particular):")
-            map_partilhas = {f"🏠 Espaço de {r['owner_username']} ({r['permission_level'].upper()})": r for r in partilhas_recebidas}
-            sel_partilha_label = st.selectbox("Selecione o Espaço para Consultar", list(map_partilhas.keys()), key="sel_space_preview")
-            sel_partilha = map_partilhas[sel_partilha_label]
-            owner_target_id = sel_partilha["owner_id"]
-
-            trans_shared = get_transactions(user_id=owner_target_id)
-            bills_shared = get_recurring_bills(user_id=owner_target_id)
-
-            st.markdown(f"##### 📊 Lançamentos no Espaço de **{sel_partilha['owner_username']}** ({len(trans_shared)} transações, {len(bills_shared)} contas recorrentes)")
-            if trans_shared:
-                df_sh = pd.DataFrame(trans_shared)[["due_date", "type", "category", "description", "amount", "status"]]
-                df_sh.columns = ["Data", "Tipo", "Categoria", "Descrição", "Valor (R$)", "Status"]
-                df_sh["Valor (R$)"] = df_sh["Valor (R$)"].apply(lambda x: f"R$ {x:,.2f}")
-                st.dataframe(df_sh, width='stretch', hide_index=True)
-            else:
-                st.caption("Nenhuma movimentação registrada no espaço deste usuário.")
-        else:
-            st.caption("Nenhum outro usuário compartilhou o espaço financeiro dele com você.")
-
-    # ---------------- ABA CONFIGURAÇÕES ----------------
+    # ---------------- ABA CONFIGURAÇÕES & PERFIL ----------------
     with tab_conf:
-        st.subheader("Chave de API do Gemini")
+        # 1. PERFIL DO USUÁRIO
+        st.subheader("👤 Meu Perfil Cadastral")
+        st.caption("Mantenha seus dados atualizados. O nome de usuário é estritamente usado para login e identificação no partilhamento.")
+
+        perfil_atual = get_user_profile(user["id"]) or user
+
+        with st.form("form_meu_perfil"):
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                st.text_input("Nome de Usuário (Login)", value=perfil_atual.get("username", ""), disabled=True, help="Identificador único para login e compartilhamento de espaços")
+                full_name_val = st.text_input("Nome Completo", value=perfil_atual.get("full_name") or "", placeholder="Ex: João da Silva")
+            with col_p2:
+                cpf_val = st.text_input("CPF / Documento", value=perfil_atual.get("cpf") or "", placeholder="000.000.000-00")
+                address_val = st.text_input("Endereço", value=perfil_atual.get("address") or "", placeholder="Ex: Rua das Flores, 123 - Cidade/UF")
+
+            if st.form_submit_button("💾 Salvar Perfil", type="primary"):
+                ok = update_user_profile(
+                    user_id=user["id"],
+                    full_name=full_name_val,
+                    address=address_val,
+                    cpf=cpf_val
+                )
+                if ok:
+                    st.session_state["user"] = get_user_profile(user["id"])
+                    st.success("✅ Informações de perfil atualizadas com sucesso!")
+                    st.rerun()
+                else:
+                    st.error("Não foi possível atualizar o perfil cadastral.")
+
+        st.markdown("---")
+
+        # 2. CHAVE DE API DO GEMINI
+        st.subheader("🔑 Chave de API do Gemini")
         chave_atual = os.getenv("GEMINI_API_KEY", "")
         if not chave_atual:
             try:
@@ -812,10 +924,12 @@ def view_consultor_configuracoes(user: dict):
                 st.error("Informe uma chave válida.")
 
         st.markdown("---")
-        st.subheader("Backup & Restauração do Banco de Dados")
+
+        # 3. BACKUP & RESTAURAÇÃO
+        st.subheader("💾 Backup & Restauração do Banco de Dados")
         col_bk1, col_bk2 = st.columns(2)
         with col_bk1:
-            st.markdown("##### 💾 Fazer Backup")
+            st.markdown("##### ⬇️ Fazer Backup")
             bk_bytes = get_db_backup_bytes()
             st.download_button(
                 label="⬇️ Baixar Cópia do Banco (financas.db)",
@@ -836,7 +950,7 @@ def view_consultor_configuracoes(user: dict):
                     else:
                         st.error(msg)
 
-        # ---------------- SEÇÃO: SEGURANÇA & ALTERAÇÃO DE SENHA ----------------
+        # 4. SEGURANÇA & ALTERAÇÃO DE SENHA
         st.markdown("---")
         st.subheader("🔐 Segurança & Alteração de Senha")
         st.write(f"Altere a sua senha de acesso ao sistema (Usuário conectado: **{user['username']}**).")
@@ -865,30 +979,42 @@ def view_consultor_configuracoes(user: dict):
                     else:
                         st.error(msg)
 
-        # Gestão de Usuários (Apenas Admin)
+        # 5. GESTÃO DE USUÁRIOS (ADMIN)
         if user.get("role") == "admin":
             st.markdown("---")
             st.subheader("👥 Gestão de Usuários")
             users = get_users()
-            st.dataframe(pd.DataFrame(users)[["id", "username", "role", "created_at"]], width='stretch', hide_index=True)
+            df_users = pd.DataFrame(users)[["id", "username", "full_name", "cpf", "role", "created_at"]]
+            df_users.columns = ["ID", "Usuário", "Nome Completo", "CPF", "Função", "Criado em"]
+            st.dataframe(df_users, width='stretch', hide_index=True)
 
             col_adm_u1, col_adm_u2 = st.columns(2)
             with col_adm_u1:
                 with st.expander("➕ Criar Novo Usuário"):
                     with st.form("form_novo_user"):
-                        u_name = st.text_input("Nome de Usuário")
-                        u_pass = st.text_input("Senha Inicial", type="password")
+                        u_name = st.text_input("Nome de Usuário (Login) *")
+                        u_pass = st.text_input("Senha Inicial *", type="password")
                         u_role = st.selectbox("Perfil / Permissão", ["editor", "viewer", "admin"])
+                        u_full_name = st.text_input("Nome Completo (Opcional)")
+                        u_cpf = st.text_input("CPF (Opcional)")
+                        u_address = st.text_input("Endereço (Opcional)")
                         if st.form_submit_button("Criar Usuário", type="primary"):
                             if u_name.strip() and u_pass.strip():
                                 try:
-                                    add_user(u_name.strip(), u_pass.strip(), u_role)
+                                    add_user(
+                                        username=u_name.strip(),
+                                        password=u_pass.strip(),
+                                        role=u_role,
+                                        full_name=u_full_name,
+                                        address=u_address,
+                                        cpf=u_cpf
+                                    )
                                     st.success(f"Usuário '{u_name}' criado com sucesso!")
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Erro ao criar usuário: {e}")
                             else:
-                                st.error("Preencha todos os campos.")
+                                st.error("Preencha o nome de usuário e a senha.")
 
             with col_adm_u2:
                 with st.expander("🔑 Redefinir Senha de Usuário (Admin)"):
@@ -911,4 +1037,311 @@ def view_consultor_configuracoes(user: dict):
                                     st.success(msg)
                                 else:
                                     st.error(msg)
+
+
+# =====================================================================
+# 7. VIEW: ESPAÇOS COMPARTILHADOS ("SEGUNDA ÁREA DE TRABALHO")
+# =====================================================================
+
+def view_espacos_compartilhados(user: dict):
+    st.title("🤝 Espaços Compartilhados")
+    st.write("Acesse a **Segunda Área de Trabalho** compartilhada com você ou gerencie os acessos ao seu próprio espaço.")
+
+    tab_segunda_area, tab_gerir_partilhas = st.tabs([
+        "💻 Segunda Área de Trabalho (Acessos Recebidos)", 
+        "📤 Gerenciar Meus Compartilhamentos (Concedidos)"
+    ])
+
+    # =================================================================
+    # ABA 1: SEGUNDA ÁREA DE TRABALHO (EDITOR OU VISUALIZADOR)
+    # =================================================================
+    with tab_segunda_area:
+        partilhas_recebidas = get_user_shares_received(user["id"])
+
+        if not partilhas_recebidas:
+            st.info(f"Nenhum usuário compartilhou o espaço financeiro com você ainda. Peça a outro usuário que conceda acesso ao seu usuário (**{user['username']}**).")
+        else:
+            map_partilhas = {
+                f"🏠 Espaço de {r['owner_username']} ({'✏️ Editor' if r['permission_level'] == 'editor' else '👁️ Visualizador'})": r 
+                for r in partilhas_recebidas
+            }
+            sel_label = st.selectbox("Selecione o Espaço de Trabalho", list(map_partilhas.keys()), key="sel_shared_workspace")
+            sel_share = map_partilhas[sel_label]
+            owner_id = sel_share["owner_id"]
+            owner_username = sel_share["owner_username"]
+            is_editor = (sel_share["permission_level"] == "editor")
+
+            # Dados do Proprietário
+            trans_prop = get_transactions(user_id=owner_id)
+            bills_prop = get_recurring_bills(user_id=owner_id)
+
+            meses_com_dados = sorted(list(set(str(t["due_date"])[:7] for t in trans_prop if t.get("due_date"))), reverse=True)
+            hoje = date.today()
+            mes_atual_str = hoje.strftime("%Y-%m")
+            if mes_atual_str not in meses_com_dados:
+                meses_com_dados.insert(0, mes_atual_str)
+
+            if is_editor:
+                # ---------------- MODO SEGUNDA ÁREA DE TRABALHO (EDITOR) ----------------
+                st.success(f"✏️ **Modo Editor Conectado:** Você está na **Segunda Área de Trabalho** de **{owner_username}**. Todas as alterações, inclusões e quitações serão gravadas diretamente no espaço dele.")
+
+                col_sf1, col_sf2 = st.columns([3, 1.5])
+                with col_sf1:
+                    trans_ativas = render_unified_filter_popover(trans_prop, meses_com_dados, key_prefix=f"sh_ed_{owner_id}")
+                with col_sf2:
+                    if st.button(f"➕ Nova Movimentação em {owner_username}", type="primary", width="stretch", key=f"btn_sh_new_{owner_id}"):
+                        modal_nova_movimentacao(user_id=owner_id)
+
+                despesas_ativas = [t for t in trans_ativas if t["type"] == "despesa"]
+                receitas_ativas = [t for t in trans_ativas if t["type"] == "receita"]
+                total_desp = sum(t["amount"] for t in despesas_ativas)
+                total_rec = sum(t["amount"] for t in receitas_ativas)
+                saldo = total_rec - total_desp
+
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    render_metric_card(f"Receitas ({owner_username})", f"R$ {total_rec:,.2f}", f"{len(receitas_ativas)} entrada(s)", "#3fb950", "🟢")
+                with c2:
+                    render_metric_card(f"Despesas ({owner_username})", f"R$ {total_desp:,.2f}", f"{len(despesas_ativas)} saída(s)", "#f85149", "🔴")
+                with c3:
+                    cor_s = "#3fb950" if saldo >= 0 else "#f85149"
+                    render_metric_card(f"Saldo ({owner_username})", f"R$ {saldo:,.2f}", "Balanço das movimentações", cor_s, "💰")
+
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                tab_m_desp, tab_m_rec, tab_m_contas = st.tabs([
+                    "🔴 Despesas do Espaço", "🟢 Receitas do Espaço", "🔄 Contas Recorrentes do Espaço"
+                ])
+
+                with tab_m_desp:
+                    st.subheader(f"Despesas no Espaço de {owner_username}")
+                    desp_pend = [d for d in despesas_ativas if d["status"] == "Pendente"]
+                    desp_pagas = [d for d in despesas_ativas if d["status"] == "Pago"]
+
+                    st.markdown("#### ⏳ Contas Pendentes / A Pagar")
+                    if desp_pend:
+                        for item in desp_pend:
+                            with st.container():
+                                ci, cv, cb, ce, cd = st.columns([4, 2, 1.5, 1.5, 1.5])
+                                with ci:
+                                    st.markdown(f"**{item['description']}**  \n<small style='color:#8b949e;'>Vence em: {item['due_date']} | Categoria: {item['category']}</small>", unsafe_allow_html=True)
+                                with cv:
+                                    st.markdown(f"<h4 style='color:#f85149; margin:0;'>R$ {item['amount']:,.2f}</h4>", unsafe_allow_html=True)
+                                with cb:
+                                    if st.button("✅ Pagar", key=f"sh_pay_{item['id']}", width="stretch"):
+                                        update_transaction_status(item["id"], "Pago", requesting_user_id=user["id"])
+                                        st.success("Conta quitada no espaço compartilhado!")
+                                        st.rerun()
+                                with ce:
+                                    if st.button("✏️ Alterar", key=f"sh_ed_dp_{item['id']}", width="stretch"):
+                                        modal_editar_movimentacao(item, user["id"])
+                                with cd:
+                                    if st.button("🗑️ Apagar", key=f"sh_del_dp_{item['id']}", width="stretch"):
+                                        delete_transaction(item["id"], user_id=user["id"])
+                                        st.success("Conta pendente excluída do espaço compartilhado!")
+                                        st.rerun()
+                                st.divider()
+                    else:
+                        st.info("Nenhuma conta pendente no espaço compartilhado.")
+
+                    st.markdown("#### ✅ Contas Pagas")
+                    if desp_pagas:
+                        for item in desp_pagas:
+                            with st.container():
+                                ci, cv, cr, ce, cd = st.columns([4, 2, 1.5, 1.5, 1.5])
+                                with ci:
+                                    st.markdown(f"**{item['description']}**  \n<small style='color:#8b949e;'>Pago em: {item['due_date']} | Categoria: {item['category']}</small>", unsafe_allow_html=True)
+                                with cv:
+                                    st.markdown(f"<h4 style='color:#f85149; margin:0;'>R$ {item['amount']:,.2f}</h4>", unsafe_allow_html=True)
+                                with cr:
+                                    if st.button("🔄 Retornar", key=f"sh_rev_{item['id']}", width="stretch"):
+                                        revert_transaction_to_pending(item["id"], requesting_user_id=user["id"])
+                                        st.rerun()
+                                with ce:
+                                    if st.button("✏️ Alterar", key=f"sh_ed_paga_{item['id']}", width="stretch"):
+                                        modal_editar_movimentacao(item, user["id"])
+                                with cd:
+                                    if st.button("🗑️ Apagar", key=f"sh_del_paga_{item['id']}", width="stretch"):
+                                        delete_transaction(item["id"], user_id=user["id"])
+                                        st.rerun()
+                                st.divider()
+                    else:
+                        st.caption("Nenhuma conta paga no espaço compartilhado.")
+
+                with tab_m_rec:
+                    st.subheader(f"Receitas no Espaço de {owner_username}")
+                    rec_pend = [r for r in receitas_ativas if r["status"] == "Pendente"]
+                    rec_rec = [r for r in receitas_ativas if r["status"] in ("Recebido", "Pago")]
+
+                    st.markdown("#### ⏳ Valores a Receber (Pendentes)")
+                    if rec_pend:
+                        for item in rec_pend:
+                            with st.container():
+                                ci, cv, cb, ce, cd = st.columns([4, 2, 1.5, 1.5, 1.5])
+                                with ci:
+                                    st.markdown(f"**{item['description']}**  \n<small style='color:#8b949e;'>Previsão: {item['due_date']} | Categoria: {item['category']}</small>", unsafe_allow_html=True)
+                                with cv:
+                                    st.markdown(f"<h4 style='color:#3fb950; margin:0;'>R$ {item['amount']:,.2f}</h4>", unsafe_allow_html=True)
+                                with cb:
+                                    if st.button("💵 Receber", key=f"sh_rec_{item['id']}", width="stretch"):
+                                        update_transaction_status(item["id"], "Recebido", requesting_user_id=user["id"])
+                                        st.success("Recebimento registrado no espaço compartilhado!")
+                                        st.rerun()
+                                with ce:
+                                    if st.button("✏️ Alterar", key=f"sh_ed_rp_{item['id']}", width="stretch"):
+                                        modal_editar_movimentacao(item, user["id"])
+                                with cd:
+                                    if st.button("🗑️ Apagar", key=f"sh_del_rp_{item['id']}", width="stretch"):
+                                        delete_transaction(item["id"], user_id=user["id"])
+                                        st.rerun()
+                                st.divider()
+                    else:
+                        st.info("Nenhuma receita pendente.")
+
+                    st.markdown("#### 🟢 Valores Recebidos")
+                    if rec_rec:
+                        for item in rec_rec:
+                            with st.container():
+                                ci, cv, cr, ce, cd = st.columns([4, 2, 1.5, 1.5, 1.5])
+                                with ci:
+                                    st.markdown(f"**{item['description']}**  \n<small style='color:#8b949e;'>Recebido em: {item['due_date']} | Categoria: {item['category']}</small>", unsafe_allow_html=True)
+                                with cv:
+                                    st.markdown(f"<h4 style='color:#3fb950; margin:0;'>R$ {item['amount']:,.2f}</h4>", unsafe_allow_html=True)
+                                with cr:
+                                    if st.button("🔄 Retornar", key=f"sh_rev_r_{item['id']}", width="stretch"):
+                                        revert_transaction_to_pending(item["id"], requesting_user_id=user["id"])
+                                        st.rerun()
+                                with ce:
+                                    if st.button("✏️ Alterar", key=f"sh_ed_rec_{item['id']}", width="stretch"):
+                                        modal_editar_movimentacao(item, user["id"])
+                                with cd:
+                                    if st.button("🗑️ Apagar", key=f"sh_del_rec_{item['id']}", width="stretch"):
+                                        delete_transaction(item["id"], user_id=user["id"])
+                                        st.rerun()
+                                st.divider()
+                    else:
+                        st.caption("Nenhum recebimento registrado.")
+
+                with tab_m_contas:
+                    st.subheader(f"Contas Recorrentes no Espaço de {owner_username}")
+                    if bills_prop:
+                        for b in bills_prop:
+                            with st.container():
+                                ci, cv, cs, ce, cd = st.columns([4, 2, 1.5, 1.5, 1.5])
+                                with ci:
+                                    st_txt = "🟢 Ativa" if b["is_active"] else "⏸️ Pausada"
+                                    st.markdown(f"**{b['description']}** ({st_txt})  \n<small style='color:#8b949e;'>Dia: {b['due_day']} | Categoria: {b['category']}</small>", unsafe_allow_html=True)
+                                with cv:
+                                    cor = "#f85149" if b["type"] == "despesa" else "#3fb950"
+                                    st.markdown(f"<h4 style='color:{cor}; margin:0;'>R$ {b['amount']:,.2f}</h4>", unsafe_allow_html=True)
+                                with cs:
+                                    novo_st = 0 if b["is_active"] else 1
+                                    lbl_st = "⏸️ Pausar" if b["is_active"] else "▶️ Ativar"
+                                    if st.button(lbl_st, key=f"sh_tgl_{b['id']}", width="stretch"):
+                                        update_recurring_bill(b["id"], requesting_user_id=user["id"], is_active=novo_st)
+                                        st.rerun()
+                                with ce:
+                                    if st.button("✏️ Alterar", key=f"sh_ed_rec_b_{b['id']}", width="stretch"):
+                                        modal_editar_conta_recorrente(b, user["id"])
+                                with cd:
+                                    if st.button("🗑️ Apagar", key=f"sh_del_rec_b_{b['id']}", width="stretch"):
+                                        delete_recurring_bill(b["id"], requesting_user_id=user["id"])
+                                        st.rerun()
+                                st.divider()
+                    else:
+                        st.info("Nenhuma conta recorrente no espaço deste usuário.")
+
+            else:
+                # ---------------- MODO DASHBOARD RESTRITO (VISUALIZADOR) ----------------
+                st.info(f"👁️ **Modo Visualizador (Apenas Leitura):** Você está visualizando o Dashboard consolidado de **{owner_username}**. Todas as informações estão em modo estritamente consultivo.")
+
+                rec_prop = [t for t in trans_prop if t["type"] == "receita"]
+                desp_prop = [t for t in trans_prop if t["type"] == "despesa"]
+                tot_rec = sum(t["amount"] for t in rec_prop)
+                tot_desp = sum(t["amount"] for t in desp_prop)
+                saldo = tot_rec - tot_desp
+
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    render_metric_card("Total Receitas", f"R$ {tot_rec:,.2f}", f"{len(rec_prop)} entradas", "#3fb950", "🟢")
+                with c2:
+                    render_metric_card("Total Despesas", f"R$ {tot_desp:,.2f}", f"{len(desp_prop)} saídas", "#f85149", "🔴")
+                with c3:
+                    cor_sd = "#3fb950" if saldo >= 0 else "#f85149"
+                    render_metric_card("Saldo Acumulado", f"R$ {saldo:,.2f}", "Resultado geral", cor_sd, "💰")
+                with c4:
+                    render_metric_card("Contas Recorrentes", f"{len(bills_prop)} contas", "Compromissos fixos", "#58a6ff", "🔄")
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.subheader(f"📊 Extrato Consolidado ({owner_username})")
+                if trans_prop:
+                    df_v = pd.DataFrame(trans_prop)[["due_date", "type", "category", "description", "amount", "status"]]
+                    df_v.columns = ["Vencimento/Data", "Tipo", "Categoria", "Descrição", "Valor", "Status"]
+                    df_v["Valor"] = df_v["Valor"].apply(lambda x: f"R$ {x:,.2f}")
+                    st.dataframe(df_v, width="stretch", hide_index=True)
+                else:
+                    st.caption("Nenhuma movimentação registrada no espaço deste usuário.")
+
+                st.subheader(f"🔄 Contas Recorrentes Fixas ({owner_username})")
+                if bills_prop:
+                    df_b = pd.DataFrame(bills_prop)[["description", "type", "category", "due_day", "amount", "is_active"]]
+                    df_b.columns = ["Descrição", "Tipo", "Categoria", "Dia Vencimento", "Valor", "Ativa"]
+                    df_b["Valor"] = df_b["Valor"].apply(lambda x: f"R$ {x:,.2f}")
+                    df_b["Ativa"] = df_b["Ativa"].apply(lambda x: "Sim" if x == 1 else "Não")
+                    st.dataframe(df_b, width="stretch", hide_index=True)
+
+    # =================================================================
+    # ABA 2: GERENCIAR MEUS COMPARTILHAMENTOS (CONCEDIDOS)
+    # =================================================================
+    with tab_gerir_partilhas:
+        st.subheader("📤 Compartilhar Meu Espaço com Outros Usuários")
+        st.write("Permita que outro usuário cadastrado acesse os seus lançamentos como Editor (Segunda Área de Trabalho) ou como Visualizador (Apenas Leitura).")
+
+        todos_usuarios = get_users()
+        outros_usuarios = [u for u in todos_usuarios if u["id"] != user["id"]]
+
+        if outros_usuarios:
+            with st.form("form_novo_share_page"):
+                map_u = {f"{u['username']} ({u['role'].upper()})": u["id"] for u in outros_usuarios}
+                sel_u_label = st.selectbox("Selecione o Usuário para Conceder Acesso", list(map_u.keys()))
+                sel_target_id = map_u[sel_u_label]
+                sel_perm = st.selectbox(
+                    "Nível de Permissão",
+                    ["editor", "viewer"],
+                    format_func=lambda x: "✏️ Editor (Segunda Área de Trabalho Completa)" if x == "editor" else "👁️ Visualizador (Apenas Leitura Consolidada)"
+                )
+                if st.form_submit_button("Conceder Compartilhamento", type="primary"):
+                    try:
+                        add_user_share(owner_id=user["id"], shared_with_user_id=sel_target_id, permission_level=sel_perm)
+                        st.success(f"Espaço compartilhado com sucesso com {sel_u_label}!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao conceder acesso: {e}")
+        else:
+            st.info("Nenhum outro usuário cadastrado no sistema para compartilhar.")
+
+        st.markdown("---")
+        st.subheader("📋 Acessos Atualmente Concedidos")
+        minhas_partilhas = get_user_shares_by_owner(user["id"])
+        if minhas_partilhas:
+            for s in minhas_partilhas:
+                with st.container():
+                    cu, cp, cd, cr = st.columns([3, 2.5, 2, 2])
+                    with cu:
+                        st.markdown(f"**👤 {s['shared_with_username']}**")
+                    with cp:
+                        cor_b = "#3fb950" if s["permission_level"] == "editor" else "#58a6ff"
+                        lbl = "✏️ Editor (Área de Trabalho)" if s["permission_level"] == "editor" else "👁️ Visualizador (Leitura)"
+                        st.markdown(f"<span style='color:{cor_b}; font-weight:600;'>{lbl}</span>", unsafe_allow_html=True)
+                    with cd:
+                        st.caption(f"Desde: {s['created_at'][:10]}")
+                    with cr:
+                        if st.button("🗑️ Revogar", key=f"pg_rev_{s['id']}", width="stretch"):
+                            delete_user_share(s["id"], owner_id=user["id"])
+                            st.success("Compartilhamento revogado!")
+                            st.rerun()
+                    st.divider()
+        else:
+            st.info("Você ainda não concedeu acesso ao seu espaço para nenhum usuário.")
+
 

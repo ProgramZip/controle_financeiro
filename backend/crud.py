@@ -3,7 +3,7 @@ import calendar
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 from backend.database import (
-    get_connection, hash_password,
+    get_connection, hash_password, get_user_by_id,
     update_user_password, change_password_with_verification
 )
 
@@ -390,18 +390,30 @@ def update_transaction(transaction_id: int, requesting_user_id: int = None, **kw
 def delete_transaction(transaction_id: int, user_id: int = None, requesting_user_id: int = None) -> bool:
     """
     Exclui uma transação individual com verificação de permissão do usuário.
-    Suporta chamada tanto com delete_transaction(id, user_id) quanto delete_transaction(id, requesting_user_id=...).
+    Se a transação for recorrente, registra em recurring_dismissals para não ser regenerada automaticamente.
     """
     u_id = user_id if user_id is not None else requesting_user_id
     with get_connection() as conn:
         cursor = conn.cursor()
-        if u_id is not None:
-            cursor.execute("SELECT user_id FROM transactions WHERE id = ?", (transaction_id,))
-            t = cursor.fetchone()
-            if not t:
-                return False
-            if not can_user_edit_resource(u_id, t["user_id"]):
-                return False
+        cursor.execute("""
+            SELECT user_id, is_recurring, recurring_ref, description, category, type 
+            FROM transactions 
+            WHERE id = ?
+        """, (transaction_id,))
+        t = cursor.fetchone()
+        if not t:
+            return False
+
+        if u_id is not None and not can_user_edit_resource(u_id, t["user_id"]):
+            return False
+
+        # Se for conta gerada por recorrência, registrar dispensa para não regenerar no mesmo mês
+        if t["is_recurring"] and t["recurring_ref"]:
+            cursor.execute("""
+                INSERT OR IGNORE INTO recurring_dismissals (
+                    user_id, recurring_ref, description, category, type
+                ) VALUES (?, ?, ?, ?, ?)
+            """, (t["user_id"], t["recurring_ref"], t["description"], t["category"], t["type"]))
 
         cursor.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
         conn.commit()
@@ -411,13 +423,30 @@ def delete_transaction(transaction_id: int, user_id: int = None, requesting_user
 def delete_transactions_by_month(user_id: int, year_month: str) -> int:
     """
     Remove todos os lançamentos pertencentes ao user_id para o mês específico (formato 'YYYY-MM').
-    Retorna o total de registros excluídos.
+    Registra dispensas para transações recorrentes apagadas para não regenerar no mesmo mês.
     """
     if not year_month or len(year_month) != 7 or "-" not in year_month:
         raise ValueError("Formato de mês inválido. Use 'YYYY-MM'.")
 
     with get_connection() as conn:
         cursor = conn.cursor()
+
+        # Registra dispensas das transações recorrentes que serão apagadas
+        cursor.execute("""
+            SELECT user_id, recurring_ref, description, category, type
+            FROM transactions
+            WHERE user_id = ?
+              AND substr(due_date, 1, 7) = ?
+              AND is_recurring = 1
+        """, (int(user_id), year_month))
+        for r in cursor.fetchall():
+            ref = r["recurring_ref"] or year_month
+            cursor.execute("""
+                INSERT OR IGNORE INTO recurring_dismissals (
+                    user_id, recurring_ref, description, category, type
+                ) VALUES (?, ?, ?, ?, ?)
+            """, (r["user_id"], ref, r["description"], r["category"], r["type"]))
+
         cursor.execute("""
             DELETE FROM transactions
             WHERE user_id = ?
@@ -549,23 +578,37 @@ def delete_recurring_bill(bill_id: int, requesting_user_id: int = None) -> bool:
         return cursor.rowcount > 0
 
 
-def process_recurring_bills(year_month: str = None, user_id: int = None) -> int:
+def process_recurring_bills(year_month: str = None, user_id: int = None, force_manual: bool = False) -> int:
     """
-    MOTOR DE RECORRÊNCIA SEM DUPLICIDADE:
-    Verifica a tabela recurring_bills. Para cada conta ativa do usuário logado (estritamente user_id = ?),
-    checa se já existe registro em transactions com recurring_ref == year_month ('YYYY-MM')
-    para a mesma conta e o mesmo user_id.
-    Se não existir, cria a movimentação com status 'Pendente'.
-    Retorna o número de contas geradas.
+    MOTOR DE RECORRÊNCIA INTELIGENTE E CONTROLADO:
+    1. Nunca roda cegamente fora do dia 1 do mês, a menos que force_manual=True (acionado explicitamente pelo usuário).
+    2. Checa duplicidade: se já existe em transactions para o mesmo mês e usuário, não recria.
+    3. Respeita exclusões manuais: se o usuário apagou a conta no mês, ela está em recurring_dismissals e
+       NÃO será regenerada automaticamente.
+    4. Se for force_manual=True (botão 'Sincronizar Mês Vigente'), sincroniza as contas do mês e permite
+       regenerar contas faltantes limpando as dispensas anteriores desse mês para esse usuário.
     """
+    hoje = datetime.now()
+
+    # Se não for acionamento manual e NÃO for o dia 1 do mês, não roda automaticamente
+    if not force_manual and hoje.day != 1:
+        return 0
+
     if year_month is None:
-        year_month = datetime.now().strftime("%Y-%m")
+        year_month = hoje.strftime("%Y-%m")
 
     year, month = map(int, year_month.split("-"))
     generated_count = 0
 
     with get_connection() as conn:
         cursor = conn.cursor()
+
+        # Se for acionamento manual explícito, limpa as dispensas do mês para restaurar as contas
+        if force_manual and user_id is not None:
+            cursor.execute("""
+                DELETE FROM recurring_dismissals
+                WHERE user_id = ? AND recurring_ref = ?
+            """, (int(user_id), year_month))
 
         # Busca contas ativas estritamente do usuário
         q_bills = "SELECT * FROM recurring_bills WHERE is_active = 1"
@@ -579,7 +622,21 @@ def process_recurring_bills(year_month: str = None, user_id: int = None) -> int:
 
         for bill in active_bills:
             b_dict = dict(bill)
-            # Verifica se já foi gerada neste mês de competência para o mesmo usuário dono
+
+            # 1. Se for automático, checa se o usuário já excluiu essa conta nesta competência
+            if not force_manual:
+                cursor.execute("""
+                    SELECT id FROM recurring_dismissals
+                    WHERE user_id = ?
+                      AND recurring_ref = ?
+                      AND description = ?
+                      AND category = ?
+                      AND type = ?
+                """, (b_dict["user_id"], year_month, b_dict["description"], b_dict["category"], b_dict["type"]))
+                if cursor.fetchone() is not None:
+                    continue  # Foi apagada manualmente pelo usuário neste mês, não regenerar!
+
+            # 2. Checa se a conta já existe em transactions para a competência
             cursor.execute("""
                 SELECT id FROM transactions
                 WHERE recurring_ref = ?
@@ -619,7 +676,6 @@ def process_recurring_bills(year_month: str = None, user_id: int = None) -> int:
                 generated_count += 1
 
         conn.commit()
-
     return generated_count
 
 
@@ -817,22 +873,57 @@ def get_users():
     """Retorna lista de todos os usuários cadastrados (sem a senha)."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, username, role, created_at FROM users ORDER BY id ASC")
+        cursor.execute("""
+            SELECT id, username, role, full_name, address, cpf, created_at 
+            FROM users 
+            ORDER BY id ASC
+        """)
         rows = cursor.fetchall()
         return [dict(r) for r in rows]
 
 
-def add_user(username: str, password: str, role: str = "editor") -> int:
-    """Cria um novo usuário no sistema."""
+def get_user_profile(user_id: int) -> dict | None:
+    """Busca o perfil completo do usuário pelo ID."""
+    return get_user_by_id(user_id)
+
+
+def add_user(username: str, password: str, role: str = "editor", 
+             full_name: str = None, address: str = None, cpf: str = None) -> int:
+    """Cria um novo usuário no sistema com perfil opcional expandido."""
     pwd_hash = hash_password(password)
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO users (username, password_hash, role)
-            VALUES (?, ?, ?)
-        """, (username, pwd_hash, role))
+            INSERT INTO users (username, password_hash, role, full_name, address, cpf)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            username.strip(), 
+            pwd_hash, 
+            role,
+            full_name.strip() if full_name else None,
+            address.strip() if address else None,
+            cpf.strip() if cpf else None
+        ))
         conn.commit()
         return cursor.lastrowid
+
+
+def update_user_profile(user_id: int, full_name: str = None, address: str = None, cpf: str = None) -> bool:
+    """Atualiza as informações cadastrais de perfil do usuário."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users 
+            SET full_name = ?, address = ?, cpf = ?
+            WHERE id = ?
+        """, (
+            full_name.strip() if full_name else None,
+            address.strip() if address else None,
+            cpf.strip() if cpf else None,
+            int(user_id)
+        ))
+        conn.commit()
+        return cursor.rowcount > 0
 
 
 def update_user_role(user_id: int, new_role: str) -> bool:

@@ -6,6 +6,7 @@ from frontend.views import (
     view_dashboard,
     view_movimentacoes,
     view_contas_mensais,
+    view_espacos_compartilhados,
     view_importacao_extratos,
     view_investimentos_orcamentos,
     view_consultor_configuracoes
@@ -53,8 +54,10 @@ def render_login():
                     user_data = verify_user(username.strip(), password.strip())
                     if user_data:
                         st.session_state["user"] = user_data
-                        # Dispara motor de recorrência na inicialização da sessão para o usuário logado
-                        process_recurring_bills(user_id=user_data["id"])
+                        # Sincronização automática controlada: roda estritamente apenas no dia 1 do mês
+                        from datetime import date
+                        if date.today().day == 1:
+                            process_recurring_bills(user_id=user_data["id"], force_manual=False)
                         st.success("Login realizado com sucesso!")
                         st.rerun()
                     else:
@@ -90,6 +93,7 @@ else:
             ("📊 Dashboard Geral", "btn_nav_dashboard"),
             ("💳 Movimentações", "btn_nav_movimentacoes"),
             ("🔄 Contas Mensais", "btn_nav_contas_mensais"),
+            ("🤝 Espaços Compartilhados", "btn_nav_espacos_compartilhados"),
             ("📄 Importar Extrato", "btn_nav_importar_extrato"),
             ("📈 Investimentos & Orçamentos", "btn_nav_investimentos"),
             ("🤖 Consultor IA & Ajustes", "btn_nav_consultor_ia")
@@ -118,6 +122,8 @@ else:
         view_movimentacoes(user)
     elif escolha == "🔄 Contas Mensais":
         view_contas_mensais(user)
+    elif escolha == "🤝 Espaços Compartilhados":
+        view_espacos_compartilhados(user)
     elif escolha == "📄 Importar Extrato":
         view_importacao_extratos(user)
     elif escolha == "📈 Investimentos & Orçamentos":

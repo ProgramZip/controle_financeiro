@@ -15,6 +15,7 @@ financas.db
 *.db
 *.sqlite
 *.sqlite3
+*.sql
 financas_backup_*.db
 
 # Arquivos de Uploads / Comprovantes / Notas Fiscais

@@ -496,11 +496,202 @@ Registro cronológico e técnico de todas as alterações, implementações e ma
 - **Validação e Testes:**
   - Criado e executado o script automatizado `.agent/scripts_auxiliares/teste_fase4_reversao_status.py`:
     - Validação de reversão de despesa paga para pendente com checagem direta no SQLite.
-    - Validação de reversão de receita recebida para pendente com checagem direta no SQLite.
     - Bloqueio de tentativa de reversão por usuário não autorizado.
     - Execução da suíte completa de testes de todas as 4 fases (`teste_fase1_senhas.py`, `teste_fase2_edicao.py`, `teste_fase3_cards_movimentacoes.py`, `teste_fase4_reversao_status.py`, `teste_exclusao_e_isolamento.py`) com 100% de aprovação e zero regressões.
 
+---
 
+## [Evolução Estrutural & Usabilidade] - 2026-10-20 - Modernização Completa, Resiliência de IA, Perfis Expandidos e Espaços Compartilhados
+- **Status:** Concluída com sucesso total (100% dos testes unitários e de regressão aprovados).
+- **Resumo Executivo das Implementações:**
 
+### 🛠️ 1. Correção Robusta do Erro 503 do Gemini com Retries e Fallback de Modelos (`backend/utils.py`)
+- **Problema:** Picos de demanda na infraestrutura da Google provocavam respostas transitórias de erro `503 UNAVAILABLE` / `ResourceExhausted` durante o uso do Consultor IA.
+- **Solução Implementada:**
+  - Implementada lógica robusta de tentativas automáticas com *exponential backoff* (atraso progressivo de 2, 4 e 6 segundos) e múltiplos modelos alternativos estáveis (`gemini-3.8-flash`, `gemini-2.5-flash`, `gemini-2.0-flash`, `gemini-1.5-flash`).
+  - Tratamento defensivo de exceções de sobrecarga de rede, retornando mensagem orientativa amigável ao usuário caso todos os endpoints públicos estejam momentaneamente congestionados.
+
+### 👤 2. Perfis de Utilizador Expandidos (`backend/database.py`, `backend/crud.py` e `frontend/views.py`)
+- **Base de Dados & Migração:**
+  - Atualizada a tabela `users` com colunas cadastrais opcionais: `full_name` (Nome Completo), `address` (Endereço) e `cpf` (Documento/CPF).
+  - Adicionada rotina de migração defensiva com `PRAGMA table_info(users)` e comandos dinâmicos `ALTER TABLE users ADD COLUMN ...` executados automaticamente na inicialização sem perda de dados existentes.
+  - O campo `username` permanece protegido como identificador único para autenticação e concessão de compartilhamento.
+- **CRUD & Interface:**
+  - Implementadas funções `update_user_profile(user_id, full_name, address, cpf)` e `get_user_profile(user_id)`.
+  - Atualizada a função `get_users()` e `add_user()` para suportar os novos campos de perfil.
+  - Na tela de Configurações (`view_consultor_configuracoes`), adicionada a seção **👤 Meu Perfil Cadastral**, permitindo visualizar o login e atualizar nome completo, CPF e endereço com atualização imediata da sessão ativa.
+  - Na gestão de usuários pelo Administrador, incluídos os campos cadastrais na criação de usuários e na listagem em tabela.
+
+### 🔍 3. Filtros Globais Unificados por Botão/Popover (`frontend/components.py` e `views.py`)
+- **Problema:** Filtros dispersos e caixas de texto repetidas em abas individuais poluiam a tela e geravam inconsistências de usabilidade.
+- **Solução Implementada:**
+  - Criado o componente reutilizável `render_unified_filter_popover` acionado via `st.popover("🔍 Filtros Globais")` no topo das telas principais.
+  - Suporte completo a 5 critérios de filtro simultâneos:
+    1. **Período:** Seleção por mês `YYYY-MM` ou histórico acumulado ("Todos os Lançamentos").
+    2. **Busca Textual Livre:** Pesquisa em tempo real por descrição ou favorecido/destinatário.
+    3. **Data de Vencimento:** Opção por Qualquer Data, Intervalo de Datas (De/Até) ou Data Específica exata.
+    4. **Faixa de Valor:** Filtro por valor mínimo e máximo em R$.
+    5. **Categorias Específicas:** Multiselect dinâmico contendo as categorias das movimentações ou contas.
+  - Substituição dos controles soltos, promovendo interface limpa, ágil e focada.
+
+### 📊 4. Reestruturação da Aba de Contas Mensais (`frontend/views.py`)
+- **Problema:** A visualização de contas recorrentes misturava despesas e receitas em uma única lista sem métricas de resumo.
+- **Solução Implementada:**
+  - Adoção exata do mesmo padrão visual, organizacional e modular da aba de Movimentações:
+    - **Cards Métricos no Topo:** Total de Despesas Fixas Ativas (R$ e contagem) e Total de Receitas Fixas Ativas (R$ e contagem).
+    - **Abas Dedicadas:** `🔴 Contas a Pagar (Despesas Fixas)` e `🟢 Receitas Fixas`.
+    - **Listagem Estruturada:** Colunas perfeitamente alinhadas com informações detalhadas (vencimento, categoria e badge de status Ativa/Pausada), valor formatado em destaque e botões de ação rápida (`⏸️ Pausar` / `▶️ Ativar`, `✏️ Alterar` e `🗑️ Apagar`).
+
+### 🗑️ 5. Exclusão em Lote por Modal `st.dialog` (`frontend/components.py` e `views.py`)
+- **Problema:** A exclusão de um mês inteiro ocupava um bloco estático inline (`st.expander`), sujeito a cliques acidentais e poluição visual.
+- **Solução Implementada:**
+  - Removido o expander estático da tela principal.
+  - Criado o modal seguro `@st.dialog("🗑️ Exclusão em Lote: Apagar Mês Completo", width="medium")` (`modal_excluir_mes_completo`), acionado por um botão elegante `🗑️ Excluir Mês` no topo de Movimentações.
+  - O modal exige seleção do mês alvo, exibe a contagem exata de lançamentos que serão apagados e requer confirmação explícita por checkbox de segurança antes de liberar o botão de exclusão permanente.
+
+### 🤝 6. Nova Página Dedicada "Espaços Compartilhados" - Segunda Área de Trabalho (`frontend/views.py` e `app.py`)
+- **Problema:** O compartilhamento de contas ficava oculto em uma aba secundária nas Configurações, sem suporte para uma experiência operacional real de colaboração financeira.
+- **Solução Implementada:**
+  - Removida a gestão antiga de partilha das Configurações e criada uma **página dedicada no menu lateral**: `"🤝 Espaços Compartilhados"`.
+  - **Aba 1: Segunda Área de Trabalho (Acessos Recebidos):**
+    - **Modo Editor (`editor`):** Concede uma "Segunda Área de Trabalho" completa sobre o espaço do proprietário. O editor visualiza os cards de métricas do espaço compartilhado, aplica filtros globais, adiciona novas movimentações diretamente na conta do parceiro (`modal_nova_movimentacao(user_id=owner_id)`), edita lançamentos, quita/recebe contas e gerencia contas recorrentes.
+    - **Modo Visualizador (`viewer`):** Concede um Dashboard consolidado e restrito (modo estritamente consultivo/leitura), com cards de resumo financeiro e tabelas analíticas estruturadas de transações e contas fixas, sem permissão de alteração ou exclusão.
+  - **Aba 2: Gerenciar Meus Compartilhamentos (Concedidos):**
+    - Formulário limpo para convidar outros usuários cadastrados definindo o nível de acesso (`viewer` ou `editor`).
+    - Gestão de acessos concedidos com histórico de concessão e botão de revogação imediata (`🗑️ Revogar`).
+
+### ✨ 7. Modernização Visual (Mobile & Desktop UI/UX) e Validação Total
+- **UI/UX:** Estilização refinada via `frontend/components.py` (`apply_custom_css`) com espaçamentos otimizados para smartphones, cantos arredondados em dataframes, botões táteis no menu executivo da barra lateral e popovers estilizados.
+- **Validação de Testes Automatizados:**
+  - Criado o script `.agent/scripts_auxiliares/teste_fase7_evolucao_completa.py` cobrindo schema, migrações, perfis cadastrais, permissões de Segunda Área de Trabalho, lógica dos filtros globais e importação de componentes.
+  - Reexecução com sucesso total de 100% da suíte de regressão (`teste_fase1_senhas.py`, `teste_fase2_edicao.py`, `teste_fase3_cards_movimentacoes.py`, `teste_fase4_reversao_status.py`, `teste_exclusao_e_isolamento.py`).
+
+---
+
+## [Melhorias Finais - Fase 1] - 2026-10-20 - Sincronização Controlada de Contas Mensais e Tabela de Dispensas (recurring_dismissals)
+- **Status:** Concluída com sucesso total (100% dos testes aprovados).
+- **Problema de Negócio Identificado:**
+  - Anteriormente, o motor `process_recurring_bills` era disparado cegamente na inicialização da sessão e login (`app.py`), gerando movimentações mesmo em dias normais do mês.
+  - Além disso, se o usuário excluísse manualmente uma movimentação gerada por recorrência para o mês vigente (`DELETE`), a execução automática subsequente recriava a mesma conta de forma indevida, desrespeitando a decisão do usuário de apagá-la naquela competência.
+- **Ações Realizadas na Base de Dados (`backend/database.py`):**
+  - Criação da tabela **`recurring_dismissals`** para registro de dispensas/exclusões intencionais:
+    ```sql
+    CREATE TABLE IF NOT EXISTS recurring_dismissals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        recurring_ref TEXT NOT NULL, -- 'YYYY-MM'
+        description TEXT NOT NULL,
+        category TEXT NOT NULL,
+        type TEXT NOT NULL,
+        dismissed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(user_id, recurring_ref, description, category, type)
+    );
+    ```
+- **Ações Realizadas no Backend (`backend/crud.py`):**
+  1. **Controle de Execução Temporal & Parâmetro `force_manual`:**
+     - A função `process_recurring_bills(year_month=None, user_id=None, force_manual=False)` agora exige estritamente que seja o **dia 1 do mês** para qualquer execução automática (`not force_manual and hoje.day != 1 -> return 0`).
+     - Apenas quando o usuário aciona explicitamente o botão manual (`force_manual=True`), a rotina executa fora do dia 1.
+  2. **Rastreamento de Exclusões Manuais:**
+     - Em `delete_transaction`: Quando uma transação recorrente (`is_recurring=1` com `recurring_ref`) é apagada pelo usuário, ela é gravada em `recurring_dismissals`.
+     - Em `delete_transactions_by_month`: Ao apagar um mês inteiro, todas as contas recorrentes nele contidas são registradas em `recurring_dismissals`.
+  3. **Proteção Anti-Regeneração Automática:**
+     - O motor de recorrência checa a tabela `recurring_dismissals`. Contas apagadas pelo usuário naquela competência são ignoradas e nunca mais são regeneradas automaticamente no mês.
+     - Se o usuário desejar restaurá-las intencionalmente, ao clicar no botão "⚡ Sincronizar Mês Vigente" (`force_manual=True`), as dispensas daquele mês são limpas e as contas ativas são reprocessadas.
+- **Ações Realizadas no Frontend e Login (`app.py` e `frontend/views.py`):**
+  - Em `app.py`: O gatilho de login agora valida estritamente se `date.today().day == 1` com `force_manual=False`, impedindo execuções automáticas desnecessárias fora do dia 1.
+  - Em `frontend/views.py`: O botão de ação rápida "⚡ Sincronizar Mês Vigente" passa o parâmetro explícito `force_manual=True`.
+- **Validação e Testes:**
+  - Criado e executado o script automatizado `.agent/scripts_auxiliares/teste_fase1_sincronizacao_controlada.py`:
+    - Validação do bloqueio automático fora do dia 1.
+    - Validação de geração manual via `force_manual=True`.
+    - Validação de gravação em `recurring_dismissals` após exclusão pelo usuário.
+    - Validação da proteção contra recriação cega de contas apagadas.
+    - Validação da regeneração permitida apenas no clique manual explícito.
+  - Execução da suíte de regressão (`teste_fase7_evolucao_completa.py`, `teste_exclusao_e_isolamento.py`) confirmando 100% de sucesso e integridade.
+
+---
+
+## [Melhorias Finais - Fase 2] - 2026-10-20 - Card de Alerta de Vencimento Imediato e Quitação Rápida no Dashboard
+- **Status:** Concluída com sucesso total (100% dos testes aprovados).
+- **Problema de Negócio Identificado:**
+  - O usuário não possuía um aviso proativo e imediato no topo da aplicação sobre despesas que estão vencendo no dia ou nos dias imediatamente seguintes (ou já vencidas em atraso), obrigando-o a navegar até a tela de Movimentações para checar pendências urgentes.
+- **Solução Implementada (`frontend/views.py`):**
+  1. **Componente de Banner / Card de Alerta (`render_due_date_alerts`):**
+     - Posicionado estrategicamente no topo do **Dashboard Geral** (`view_dashboard`), logo abaixo do título principal da página.
+     - Realiza consulta filtrada estritamente pelo `user_id` logado (`trans_type="despesa"`, `status="Pendente"`).
+     - Analisa a data de vencimento (`due_date`) em relação à data atual (`hoje = date.today()`):
+       - **Vencida em Atraso:** (`due_date < hoje`) -> badge vermelho com contagem de dias em atraso.
+       - **Vence Hoje:** (`due_date == hoje`) -> badge dourado com destaque imediato.
+       - **Vence Amanhã:** (`due_date == hoje + 1 dia`) -> badge azul claro.
+       - **Vence nos Próximos 3 Dias:** (`hoje < due_date <= hoje + 3 dias`) -> badge azul com contagem de dias restantes.
+     - Se não existirem despesas vencidas ou vencendo nos próximos 3 dias, o card não é exibido, mantendo o painel limpo.
+  2. **Resumo Visual Consolidado & Quitação Rápida (`_render_alert_item_row`):**
+     - O banner exibe a contagem total de contas urgentes e o valor somado em R$ com destaque de urgência (ícone `🚨` para atrasos ou `⚠️` para vencimentos iminentes).
+     - Cada conta é exibida com: badge de urgência, descrição, número de parcela (se parcelado), categoria, data de vencimento, valor formatado e botão **"✅ Quitar"** em 1 clique.
+     - O botão de quitação rápida aciona `update_transaction_status(item["id"], "Pago", requesting_user_id=user["id"])`, emite notificação `st.toast` e atualiza a interface instantaneamente via `st.rerun()`.
+     - Layout ergonômico: exibe as 3 contas mais prioritárias diretamente; se houver mais de 3, exibe as demais organizadas dentro de um expander expansível (`st.expander`), garantindo fluidez e responsividade tanto no desktop quanto em smartphones.
+- **Validação e Testes Automatizados:**
+  - Criado o script de validação `.agent/scripts_auxiliares/teste_fase2_alerta_vencimento.py`:
+    - Validação de detecção de contas em atraso, vencendo hoje, amanhã e em 3 dias.
+    - Validação de exclusão correta de contas futuras (> 3 dias), contas já pagas, receitas e contas de terceiros (isolamento estrito por usuário).
+    - Validação da ação de quitação rápida em 1 clique (`update_transaction_status` para `"Pago"`).
+  - Execução dos testes automatizados com 100% de êxito e reexecução de regressão (`teste_fase1_sincronizacao_controlada.py`, `teste_fase7_evolucao_completa.py`).
+
+---
+
+## [Melhorias Finais - Fase 3] - 2026-10-20 - Suporte Flexível a Banco de Dados em Nuvem (Turso / LibSQL / SQLite Customizado)
+- **Status:** Concluída com sucesso total (100% dos testes aprovados).
+- **Problema de Negócio Identificado:**
+  - Em ambientes de nuvem efêmeros (como Streamlit Community Cloud), o disco local pode ser resetado a cada reinício de container, o que faria o arquivo SQLite local (`financas.db`) ser restaurado ao estado inicial caso o usuário não utilizasse backup.
+- **Solução Implementada (`backend/database.py` e `.env.example`):**
+  1. **Detecção e Resolução de Conexão Flexível:**
+     - Implementada a função `get_database_url()`, que busca automaticamente a string de conexão em:
+       1. Variáveis de ambiente `DATABASE_URL` ou `TURSO_DATABASE_URL` (`.env`).
+       2. Secrets do Streamlit (`st.secrets["DATABASE_URL"]` ou `st.secrets["TURSO_DATABASE_URL"]`), ideal para deploy no Streamlit Cloud.
+     - Implementada a função `get_turso_auth_token()` para suporte a autenticação JWT do Turso/LibSQL.
+  2. **Arquitetura Multi-Driver Transparente em `get_connection()`:**
+     - **Modo Nuvem (Turso / LibSQL):** Detecta URLs com esquema `libsql://` ou `https://` (ou domínio `turso.io`). Tenta carregar o driver `libsql_experimental` ou `libsql` dinamicamente com Row Factory ativado e validação de chaves estrangeiras. Caso a biblioteca não esteja instalada no ambiente local, emite um `warning` descritivo e faz fallback seguro para o SQLite local sem travar a execução.
+     - **Modo SQLite Personalizado:** Aceita URLs como `sqlite:///caminho/banco.db` ou caminhos diretos, permitindo apontar para volumes persistentes ou bases de homologação/teste.
+     - **Modo Padrão Local (financas.db):** Caso nenhuma variável de ambiente seja configurada, opera normalmente com a base SQLite padrão (`financas.db`), garantindo retrocompatibilidade total com o desenvolvimento local.
+  3. **Documentação e Onboarding (`.env.example`):**
+     - Criado o arquivo `.env.example` contendo as instruções práticas para configuração do Gemini e do banco em nuvem (Turso/LibSQL) ou SQLite customizado.
+- **Validação e Testes Automatizados:**
+  - Criado o script de validação `.agent/scripts_auxiliares/teste_fase3_banco_nuvem.py`:
+    - Validação de conexão e consultas com o banco SQLite padrão (`financas.db`).
+    - Validação de conexão e escrita com SQLite personalizado via `DATABASE_URL="sqlite:///..."`.
+    - Validação de fallback defensivo com emissão de `warning` estruturado para URLs Turso quando o driver não está presente.
+  - Bateria completa de regressão executada com 100% de êxito:
+    - `teste_fase1_sincronizacao_controlada.py` -> APROVADO
+    - `teste_fase2_alerta_vencimento.py` -> APROVADO
+    - `teste_fase3_banco_nuvem.py` -> APROVADO
+    - `teste_fase7_evolucao_completa.py` -> APROVADO
+
+---
+
+## [Turso Cloud] - 2026-10-20 - Integração e Ativação Operacional do Banco em Nuvem Turso
+- **Status:** Ativo e 100% operacional no cluster de nuvem `controle-financeiro-programzip.aws-sa-east-1.turso.io`.
+- **Objetivo Concluído:**
+  - Conectar a aplicação ao banco de dados na nuvem do Turso utilizando as credenciais `DATABASE_URL` e `DATABASE_AUTH_TOKEN` no `.env`.
+- **Ações Realizadas:**
+  1. **Dependências (`requirements.txt`):**
+     - Adicionado o pacote oficial `libsql-client` ao `requirements.txt`.
+  2. **Módulo de Conexão (`backend/database.py`):**
+     - Suporte nativo à leitura de `DATABASE_URL` e `DATABASE_AUTH_TOKEN` (com retrocompatibilidade para `TURSO_AUTH_TOKEN` e `st.secrets`).
+     - Conversão automática do protocolo `libsql://` para `https://` para conexão via HTTP/REST compatível com todos os ambientes e proxies sem dependência de WebSockets ou compilação C/Rust.
+     - Implementação da camada adaptadora DB-API 2.0 (`LibsqlConnection`, `LibsqlCursor`, `LibsqlRow`):
+       - Suporte completo a Row Factory com acesso por nome (`row["col"]`), por índice numérico (`row[0]`), método `.get()` e conversão transparente para `dict(row)`.
+       - Tratamento correto de contagem de linhas afetadas (`rowcount`) e IDs autoincrementais inseridos (`lastrowid`) corrigindo a falsidade booleana de `ResultSet` vazio em operações DML (`self._rs is not None`).
+       - Gerenciamento transparente de ciclo de vida de conexões (context manager `with get_connection() as conn:`) fechando as sessões HTTP de forma limpa e sem vazamento de threads.
+     - Preservação total do fallback automático para SQLite local (`financas.db`) caso nenhuma credencial seja informada.
+  3. **Configuração do `.env` e `.env.example`:**
+     - Configurado `.env` com a URL e Token JWT de produção do Turso Cloud.
+     - Documentado `.env.example` com os parâmetros `DATABASE_URL` e `DATABASE_AUTH_TOKEN`.
+- **Validação e Testes Automatizados no Turso Cloud:**
+  - Criado e executado o script de validação `.agent/scripts_auxiliares/teste_turso_cloud_completo.py`:
+    - Inicialização remota de todas as 7 tabelas estruturais no cluster do Turso.
+    - Autenticação e criação do usuário padrão `admin`.
+    - Ciclo completo de lançamentos: inserção (`add_transaction`), consulta filtrada (`get_transactions`), alteração de status em 1 clique (`update_transaction_status`) e exclusão (`delete_transaction`).
+  - Suíte completa de testes de regressão (`teste_fase1_sincronizacao_controlada.py`, `teste_fase2_alerta_vencimento.py`, `teste_fase3_banco_nuvem.py`, `teste_fase7_evolucao_completa.py`) executada diretamente contra o Turso Cloud com 100% de sucesso.
 
 

@@ -2,6 +2,7 @@ import os
 import io
 import re
 import csv
+import time
 import uuid
 import shutil
 import sqlite3
@@ -676,12 +677,40 @@ Analise os dados financeiros reais do mês {month_year} detalhados abaixo:
     if user_question:
         prompt += f"\n\nPergunta adicional do usuário: {user_question}"
 
+    models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    last_error = ""
+
     try:
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt
-        )
-        return response.text
     except Exception as e:
-        return f"⚠️ Erro ao consultar o modelo Gemini: {str(e)}"
+        return f"⚠️ Erro ao inicializar cliente Gemini: {e}"
+
+    for model_name in models_to_try:
+        for attempt in range(1, 4):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                if response and response.text:
+                    return response.text
+            except Exception as e:
+                err_str = str(e)
+                last_error = err_str
+                # Se for erro de indisponibilidade transitória (503, 429, overload, etc.)
+                is_transient = any(code in err_str.upper() for code in ["503", "UNAVAILABLE", "OVERLOADED", "RESOURCE_EXHAUSTED", "429", "DEADLINE_EXCEEDED"])
+                if is_transient and attempt < 3:
+                    time.sleep(1.2 * attempt)
+                    continue
+                else:
+                    # Se não for erro transitório ou já esgotou tentativas desse modelo, tenta o próximo modelo
+                    break
+
+    # Se todos os modelos e tentativas falharem
+    return (
+        "⚠️ **Serviço de IA Temporariamente Indisponível (Pico de Demanda)**\n\n"
+        "Os servidores do Google Gemini estão enfrentando uma alta demanda no momento (código 503 / indisponibilidade temporária).\n\n"
+        "O sistema realizou tentativas automáticas com modelos alternativos, mas a capacidade da API continua momentaneamente congestionada.\n\n"
+        "💡 **O que fazer:** Aguarde de 30 a 60 segundos e clique novamente no botão **'🚀 Gerar Diagnóstico Financeiro'**.\n\n"
+        f"<small style='color:#8b949e;'>Diagnóstico técnico: {last_error}</small>"
+    )

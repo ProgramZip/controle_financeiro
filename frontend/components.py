@@ -2,7 +2,10 @@ import os
 import streamlit as st
 from datetime import date, datetime
 from backend.database import get_connection
-from backend.crud import add_transaction, add_recurring_bill, update_transaction, update_recurring_bill
+from backend.crud import (
+    add_transaction, add_recurring_bill, update_transaction, update_recurring_bill,
+    delete_transactions_by_month, get_transactions
+)
 from backend.utils import (
     CATEGORIAS_DESPESA,
     CATEGORIAS_RECEITA,
@@ -90,6 +93,31 @@ def apply_custom_css():
         section[data-testid="stSidebar"] div.stButton > button:hover {
             border-color: rgba(63, 185, 80, 0.5) !important;
             transform: translateX(2px);
+        }
+
+        /* Estilização refinada para Popovers e Modais */
+        [data-testid="stPopover"] button {
+            border-radius: 8px !important;
+            font-weight: 500 !important;
+            border: 1px solid rgba(255, 255, 255, 0.15) !important;
+            background-color: rgba(255, 255, 255, 0.03) !important;
+        }
+        [data-testid="stPopover"] button:hover {
+            border-color: #58a6ff !important;
+            background-color: rgba(88, 166, 255, 0.08) !important;
+        }
+
+        /* Tabelas responsivas com cantos arredondados */
+        [data-testid="stDataFrame"] {
+            border-radius: 10px !important;
+            overflow: hidden !important;
+            border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        }
+
+        /* Ajuste de divisores para visual limpo */
+        hr {
+            margin: 1.2rem 0 !important;
+            border-color: rgba(255, 255, 255, 0.08) !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -561,5 +589,143 @@ def modal_editar_conta_recorrente(bill: dict, user_id: int):
                 st.error("Erro ao atualizar a conta recorrente.")
         except Exception as e:
             st.error(f"Erro ao atualizar: {e}")
+
+
+@st.dialog("🗑️ Exclusão em Lote: Apagar Mês Completo", width="medium")
+def modal_excluir_mes_completo(user_id: int, meses_disponiveis: list[str]):
+    """
+    Modal de confirmação rigorosa para exclusão em lote de todas as movimentações
+    de um mês específico pertencente ao usuário.
+    """
+    st.markdown("##### ⚠️ Excluir Todos os Lançamentos de um Mês")
+    st.caption("Esta operação remove definitivamente todas as receitas e despesas do mês selecionado pertencentes à sua conta.")
+
+    if not meses_disponiveis or meses_disponiveis == ["Todos os Lançamentos"]:
+        st.info("Não há meses com movimentações cadastradas para exclusão.")
+        return
+
+    meses_validos = [m for m in meses_disponiveis if m != "Todos os Lançamentos"]
+    if not meses_validos:
+        st.info("Não há meses com movimentações cadastradas.")
+        return
+
+    mes_del_sel = st.selectbox("Selecione o Mês a Excluir (YYYY-MM)", meses_validos, key="dialog_sel_mes_del")
+    
+    # Busca contagem no mês
+    trans = get_transactions(user_id=user_id)
+    total_no_mes = len([t for t in trans if str(t.get("due_date", ""))[:7] == mes_del_sel])
+    
+    st.warning(f"Total encontrado em **{mes_del_sel}**: **{total_no_mes}** movimentação(ões).")
+    
+    confirm_chk = st.checkbox(
+        f"Confirmo que desejo apagar permanentemente todas as {total_no_mes} movimentações de {mes_del_sel}.",
+        key="dialog_chk_conf_del_mes"
+    )
+    
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        if st.button("Cancelar", width="stretch", key="btn_cancel_del_mes"):
+            st.rerun()
+    with col_d2:
+        if st.button("🗑️ Apagar Mês Completo", type="primary", width="stretch", disabled=not confirm_chk or total_no_mes == 0, key="btn_exec_del_mes"):
+            apagados = delete_transactions_by_month(user_id, mes_del_sel)
+            st.success(f"✅ {apagados} movimentação(ões) de {mes_del_sel} foram excluídas com sucesso!")
+            st.rerun()
+
+
+def render_unified_filter_popover(
+    all_items: list[dict], 
+    available_months: list[str], 
+    key_prefix: str = "global_filter",
+    show_categories: bool = True
+) -> list[dict]:
+    """
+    Renderiza um componente centralizado acionado por st.popover com todos os critérios
+    avançados de filtro e retorna a lista filtrada de movimentações ou contas.
+    """
+    with st.popover("🔍 Filtros Globais", help="Filtros avançados por período, texto, vencimento, valor e categoria"):
+        st.markdown("##### 🔍 Filtros Avançados")
+        
+        # 1. Período
+        opcoes_per = ["Todos os Lançamentos"] + available_months
+        sel_per = st.selectbox("📅 Período (YYYY-MM)", opcoes_per, index=0, key=f"{key_prefix}_per")
+        
+        # 2. Pesquisa textual livre (descrição ou favorecido)
+        busca_txt = st.text_input("📝 Busca Textual (Descrição ou Favorecido)", placeholder="Digite nome, descrição...", key=f"{key_prefix}_txt")
+        
+        # 3. Data de vencimento (intervalo ou específica)
+        col_dt_tipo, col_dt_val = st.columns([1.2, 1.8])
+        with col_dt_tipo:
+            tipo_data = st.selectbox(
+                "📅 Tipo de Data", 
+                ["Qualquer Data", "Intervalo", "Data Específica"], 
+                key=f"{key_prefix}_tipo_dt"
+            )
+        dt_ini, dt_fim, dt_esp = None, None, None
+        with col_dt_val:
+            if tipo_data == "Intervalo":
+                c_d1, c_d2 = st.columns(2)
+                with c_d1:
+                    dt_ini = st.date_input("De", value=date.today().replace(day=1), key=f"{key_prefix}_dt_ini")
+                with c_d2:
+                    dt_fim = st.date_input("Até", value=date.today(), key=f"{key_prefix}_dt_fim")
+            elif tipo_data == "Data Específica":
+                dt_esp = st.date_input("Data Exata", value=date.today(), key=f"{key_prefix}_dt_esp")
+            else:
+                st.caption("Todas as datas de vencimento")
+        
+        # 4. Faixa de Valor (Mínimo e Máximo)
+        c_v1, c_v2 = st.columns(2)
+        with c_v1:
+            val_min = st.number_input("Valor Mínimo (R$)", min_value=0.0, value=0.0, step=10.0, key=f"{key_prefix}_vmin")
+        with c_v2:
+            val_max = st.number_input("Valor Máximo (R$)", min_value=0.0, value=0.0, step=50.0, key=f"{key_prefix}_vmax", help="Deixe 0.00 para não limitar o máximo")
+        
+        # 5. Categorias
+        sel_cats = []
+        if show_categories:
+            todas_cats = sorted(list(set(t.get("category", "") for t in all_items if t.get("category"))))
+            if not todas_cats:
+                todas_cats = CATEGORIAS_DESPESA + CATEGORIAS_RECEITA
+            sel_cats = st.multiselect("🏷️ Categorias", options=todas_cats, default=[], key=f"{key_prefix}_cats")
+
+    # Aplicação dos filtros
+    filtrados = all_items
+    
+    # 1. Período
+    if sel_per != "Todos os Lançamentos":
+        filtrados = [t for t in filtrados if str(t.get("due_date", ""))[:7] == sel_per]
+        
+    # 2. Pesquisa textual
+    if busca_txt.strip():
+        term = busca_txt.strip().lower()
+        filtrados = [
+            t for t in filtrados
+            if term in str(t.get("description", "")).lower()
+            or term in str(t.get("recipient", "")).lower()
+        ]
+        
+    # 3. Data
+    if tipo_data == "Intervalo" and dt_ini and dt_fim:
+        ini_str = dt_ini.strftime("%Y-%m-%d")
+        fim_str = dt_fim.strftime("%Y-%m-%d")
+        filtrados = [t for t in filtrados if ini_str <= str(t.get("due_date", "")) <= fim_str]
+    elif tipo_data == "Data Específica" and dt_esp:
+        esp_str = dt_esp.strftime("%Y-%m-%d")
+        filtrados = [t for t in filtrados if str(t.get("due_date", "")) == esp_str]
+        
+    # 4. Valor
+    if val_min > 0:
+        filtrados = [t for t in filtrados if float(t.get("amount", 0)) >= val_min]
+    if val_max > 0 and val_max >= val_min:
+        filtrados = [t for t in filtrados if float(t.get("amount", 0)) <= val_max]
+        
+    # 5. Categorias
+    if sel_cats:
+        filtrados = [t for t in filtrados if t.get("category") in sel_cats]
+        
+    return filtrados
+
+
 
 
