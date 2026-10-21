@@ -59,11 +59,12 @@ def render_due_date_alerts(user: dict):
     hoje = date.today()
     limite_3dias = hoje + timedelta(days=3)
 
-    # Busca despesas pendentes estritamente do usuário logado
+    # Busca despesas pendentes estritamente do usuário logado até o limite de 3 dias
     pendentes = get_transactions(
         user_id=user["id"],
         trans_type="despesa",
-        status="Pendente"
+        status="Pendente",
+        end_date=limite_3dias.strftime("%Y-%m-%d")
     )
 
     alert_items = []
@@ -196,9 +197,8 @@ def view_dashboard(user: dict):
         if st.button("➕ Nova Movimentação", type="primary", width='stretch', key="btn_dash_nova_mov"):
             modal_nova_movimentacao(user["id"])
 
-    # Carrega transações estritamente do próprio usuário logado
-    transacoes = get_transactions(user_id=user["id"])
-    trans_mes = [t for t in transacoes if str(t.get("due_date", ""))[:7] == mes_sel]
+    # Carrega transações estritamente do mês de referência para o usuário logado
+    trans_mes = get_transactions(user_id=user["id"], month_year=mes_sel)
 
     # Cálculos
     receitas_total = sum(t["amount"] for t in trans_mes if t["type"] == "receita")
@@ -877,7 +877,7 @@ def view_consultor_configuracoes(user: dict):
         st.subheader("👤 Meu Perfil Cadastral")
         st.caption("Mantenha seus dados atualizados. O nome de usuário é estritamente usado para login e identificação no partilhamento.")
 
-        perfil_atual = get_user_profile(user["id"]) or user
+        perfil_atual = st.session_state.get("user") or user
 
         with st.form("form_meu_perfil"):
             col_p1, col_p2 = st.columns(2)
@@ -896,7 +896,10 @@ def view_consultor_configuracoes(user: dict):
                     cpf=cpf_val
                 )
                 if ok:
-                    st.session_state["user"] = get_user_profile(user["id"])
+                    user["full_name"] = full_name_val
+                    user["address"] = address_val
+                    user["cpf"] = cpf_val
+                    st.session_state["user"] = user
                     st.success("✅ Informações de perfil atualizadas com sucesso!")
                     st.rerun()
                 else:

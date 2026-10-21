@@ -34,6 +34,12 @@ def get_database_url() -> str | None:
                 return str(st.secrets["DATABASE_URL"]).strip()
             if "TURSO_DATABASE_URL" in st.secrets:
                 return str(st.secrets["TURSO_DATABASE_URL"]).strip()
+            if "turso" in st.secrets:
+                turso_sec = st.secrets["turso"]
+                if "DATABASE_URL" in turso_sec:
+                    return str(turso_sec["DATABASE_URL"]).strip()
+                if "url" in turso_sec:
+                    return str(turso_sec["url"]).strip()
     except Exception:
         pass
     return None
@@ -54,6 +60,12 @@ def get_database_auth_token() -> str | None:
                 return str(st.secrets["DATABASE_AUTH_TOKEN"]).strip()
             if "TURSO_AUTH_TOKEN" in st.secrets:
                 return str(st.secrets["TURSO_AUTH_TOKEN"]).strip()
+            if "turso" in st.secrets:
+                turso_sec = st.secrets["turso"]
+                if "DATABASE_AUTH_TOKEN" in turso_sec:
+                    return str(turso_sec["DATABASE_AUTH_TOKEN"]).strip()
+                if "auth_token" in turso_sec:
+                    return str(turso_sec["auth_token"]).strip()
     except Exception:
         pass
     return None
@@ -176,13 +188,79 @@ class LibsqlCursor:
         pass
 
 
-class LibsqlConnection:
-    """Conexão compatível com SQLite para operações transparentes no Turso Cloud."""
-    def __init__(self, url: str, token: str | None):
+_SHARED_LIBSQL_CLIENT = None
+_SHARED_LIBSQL_KEY = None
+
+
+def _patch_libsql_executor_daemon():
+    """Garante que threads internas do libsql_client sejam daemon, evitando bloqueio de shutdown."""
+    try:
+        import threading
+        import collections
+        import asyncio
+        import libsql_client.sync
+
+        if getattr(libsql_client.sync, "_daemon_patched", False):
+            return
+
+        def _daemon_init(self):
+            self._thread = threading.Thread(target=self._run, name="libsql_client", daemon=True)
+            self._loop = asyncio.new_event_loop()
+            self._lock = threading.Lock()
+            self._closed = False
+            self._queue = collections.deque()
+            self._waker = None
+            self._thread.start()
+
+        libsql_client.sync._AsyncExecutor.__init__ = _daemon_init
+        libsql_client.sync._daemon_patched = True
+    except Exception:
+        pass
+
+
+def get_shared_libsql_client(url: str, token: str | None):
+    """
+    Retorna cliente libsql-client com pooling HTTP persistente.
+    Evita abrir e fechar novas conexões e loops a cada instrução SQL.
+    """
+    global _SHARED_LIBSQL_CLIENT, _SHARED_LIBSQL_KEY
+    key = (url, token)
+    if _SHARED_LIBSQL_CLIENT is None or _SHARED_LIBSQL_KEY != key:
+        _patch_libsql_executor_daemon()
         import libsql_client
+        if _SHARED_LIBSQL_CLIENT is not None:
+            try:
+                _SHARED_LIBSQL_CLIENT.close()
+            except Exception:
+                pass
+        _SHARED_LIBSQL_CLIENT = libsql_client.create_client_sync(url, auth_token=token)
+        _SHARED_LIBSQL_KEY = key
+    return _SHARED_LIBSQL_CLIENT
+
+
+def close_shared_libsql_client():
+    """Fecha explicitamente o cliente compartilhado (usado em testes e reinicializações)."""
+    global _SHARED_LIBSQL_CLIENT, _SHARED_LIBSQL_KEY
+    if _SHARED_LIBSQL_CLIENT is not None:
+        try:
+            _SHARED_LIBSQL_CLIENT.close()
+        except Exception:
+            pass
+        _SHARED_LIBSQL_CLIENT = None
+        _SHARED_LIBSQL_KEY = None
+
+
+class LibsqlConnection:
+    """Conexão compatível com SQLite para operações transparentes no Turso Cloud com pool HTTP persistente."""
+    def __init__(self, url: str, token: str | None, client=None):
         self._url = url
         self._token = token
-        self._client = libsql_client.create_client_sync(url, auth_token=token)
+        if client is not None:
+            self._client = client
+            self._is_shared = False
+        else:
+            self._client = get_shared_libsql_client(url, token)
+            self._is_shared = True
 
     def cursor(self):
         return LibsqlCursor(self._client, self._url, self._token)
@@ -199,10 +277,12 @@ class LibsqlConnection:
         pass
 
     def close(self):
-        try:
-            self._client.close()
-        except Exception:
-            pass
+        # Clientes compartilhados mantêm o pool HTTP keep-alive aberto para máxima performance
+        if not getattr(self, "_is_shared", False):
+            try:
+                self._client.close()
+            except Exception:
+                pass
 
     def __enter__(self):
         return self
@@ -260,11 +340,19 @@ def get_connection():
     return conn
 
 
-def init_db():
+_DB_INITIALIZED = False
+
+
+def init_db(force: bool = False):
     """
     Inicializa o banco de dados criando as 5 tabelas estruturais
     e criando o usuário padrão admin / admin123 caso ainda não exista.
+    Possui memoização em processo para evitar round-trips de rede a cada rerun do Streamlit.
     """
+    global _DB_INITIALIZED
+    if _DB_INITIALIZED and not force:
+        return
+
     with get_connection() as conn:
         cursor = conn.cursor()
 
@@ -408,6 +496,8 @@ def init_db():
             """, ("admin", default_pass_hash, "admin"))
 
         conn.commit()
+
+    _DB_INITIALIZED = True
 
 
 def verify_user(username: str, password: str):

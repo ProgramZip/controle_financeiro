@@ -20,8 +20,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. Inicialização do Banco e Aplicação do Design System
-init_db()
+# 2. Inicialização do Banco (com cache persistente de recurso) e Aplicação do Design System
+@st.cache_resource(show_spinner=False)
+def ensure_database_ready():
+    init_db()
+    return True
+
+ensure_database_ready()
 apply_custom_css()
 
 # 3. Gerenciamento do Estado de Sessão e Autenticação

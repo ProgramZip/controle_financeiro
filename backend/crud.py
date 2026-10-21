@@ -2,10 +2,19 @@ import uuid
 import calendar
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
+import streamlit as st
 from backend.database import (
     get_connection, hash_password, get_user_by_id,
     update_user_password, change_password_with_verification
 )
+
+
+def clear_app_cache():
+    """Limpa o cache de leitura em memória do Streamlit após mutações no banco de dados."""
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
 
 
 # =====================================================================
@@ -33,6 +42,7 @@ def _get_due_date_for_month(year: int, month: int, due_day: int) -> str:
 # GESTÃO DE PARTILHAMENTO (user_shares) E ACESSO MULTI-USUÁRIO
 # =====================================================================
 
+@st.cache_data(ttl=120, show_spinner=False)
 def get_accessible_user_ids(user_id: int) -> list[int]:
     """
     Retorna a lista de IDs de usuários cujos registros o user_id logado tem permissão para visualizar.
@@ -54,6 +64,7 @@ def get_accessible_user_ids(user_id: int) -> list[int]:
         return list(accessible)
 
 
+@st.cache_data(ttl=120, show_spinner=False)
 def get_user_shares_by_owner(owner_id: int):
     """
     Lista todos os compartilhamentos concedidos pelo owner_id (com quem ele compartilhou).
@@ -71,6 +82,7 @@ def get_user_shares_by_owner(owner_id: int):
         return [dict(r) for r in cursor.fetchall()]
 
 
+@st.cache_data(ttl=120, show_spinner=False)
 def get_user_shares_received(shared_with_user_id: int):
     """
     Lista todos os compartilhamentos que este usuário recebeu de outros proprietários.
@@ -108,6 +120,7 @@ def add_user_share(owner_id: int, shared_with_user_id: int, permission_level: st
             DO UPDATE SET permission_level = excluded.permission_level
         """, (int(owner_id), int(shared_with_user_id), permission_level))
         conn.commit()
+        clear_app_cache()
         return True
 
 
@@ -122,9 +135,11 @@ def delete_user_share(share_id: int, owner_id: int = None) -> bool:
         else:
             cursor.execute("DELETE FROM user_shares WHERE id = ?", (share_id,))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
+@st.cache_data(ttl=120, show_spinner=False)
 def get_user_permission(owner_id: int, user_id: int) -> str | None:
     """
     Retorna o nível de permissão que user_id tem sobre os dados de owner_id.
@@ -243,10 +258,12 @@ def add_transaction(
             ))
 
         conn.commit()
+        clear_app_cache()
 
     return assigned_group_id
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def get_transactions(
     user_id: int = None,
     trans_type: str = None,
@@ -256,12 +273,15 @@ def get_transactions(
     category: str = None,
     group_id: str = None,
     search: str = None,
-    include_shared: bool = False
+    include_shared: bool = False,
+    month_year: str = None,
+    limit: int = None
 ):
     """
-    Retorna lista de movimentações com filtros opcionais.
+    Retorna lista de movimentações com filtros opcionais (otimizado com cache de 60s).
     POR PADRÃO (include_shared=False): filtra ESTRITAMENTE pelo próprio user_id logado.
     Se include_shared=True: expande para incluir dados de espaços compartilhados.
+    Suporta filtro direto de competência (month_year='YYYY-MM') e limitação de registros (limit).
     """
     query = """
         SELECT t.*, u.username AS owner_username
@@ -300,6 +320,10 @@ def get_transactions(
         query += " AND t.due_date <= ?"
         params.append(end_date)
 
+    if month_year is not None:
+        query += " AND t.due_date LIKE ?"
+        params.append(f"{month_year}%")
+
     if category is not None:
         query += " AND t.category = ?"
         params.append(category)
@@ -314,6 +338,10 @@ def get_transactions(
         params.extend([term, term])
 
     query += " ORDER BY t.due_date DESC, t.id DESC"
+
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(int(limit))
 
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -338,6 +366,7 @@ def update_transaction_status(transaction_id: int, new_status: str, requesting_u
             WHERE id = ?
         """, (new_status, transaction_id))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
@@ -384,6 +413,7 @@ def update_transaction(transaction_id: int, requesting_user_id: int = None, **kw
         query = f"UPDATE transactions SET {', '.join(updates)} WHERE id = ?"
         cursor.execute(query, params)
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
@@ -417,6 +447,7 @@ def delete_transaction(transaction_id: int, user_id: int = None, requesting_user
 
         cursor.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
@@ -453,6 +484,7 @@ def delete_transactions_by_month(user_id: int, year_month: str) -> int:
               AND substr(due_date, 1, 7) = ?
         """, (int(user_id), year_month))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount
 
 
@@ -468,6 +500,7 @@ def delete_transaction_group(group_id: str, requesting_user_id: int = None) -> i
 
         cursor.execute("DELETE FROM transactions WHERE group_id = ?", (group_id,))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount
 
 
@@ -493,12 +526,14 @@ def add_recurring_bill(
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (int(user_id), bill_type, category, description, round(amount, 2), due_day, is_active))
         conn.commit()
+        clear_app_cache()
         return cursor.lastrowid
 
 
+@st.cache_data(ttl=180, show_spinner=False)
 def get_recurring_bills(user_id: int = None, is_active: int = None, include_shared: bool = False):
     """
-    Lista as contas recorrentes cadastradas.
+    Lista as contas recorrentes cadastradas (otimizado com cache de 180s).
     POR PADRÃO (include_shared=False): filtra ESTRITAMENTE pelo próprio user_id logado.
     """
     query = """
@@ -560,6 +595,7 @@ def update_recurring_bill(bill_id: int, requesting_user_id: int = None, **kwargs
         params.append(bill_id)
         cursor.execute(f"UPDATE recurring_bills SET {', '.join(updates)} WHERE id = ?", params)
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
@@ -575,6 +611,7 @@ def delete_recurring_bill(bill_id: int, requesting_user_id: int = None) -> bool:
 
         cursor.execute("DELETE FROM recurring_bills WHERE id = ?", (bill_id,))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
@@ -676,6 +713,9 @@ def process_recurring_bills(year_month: str = None, user_id: int = None, force_m
                 generated_count += 1
 
         conn.commit()
+        if generated_count > 0 or force_manual:
+            clear_app_cache()
+
     return generated_count
 
 
@@ -703,12 +743,14 @@ def add_investment(
             ) VALUES (?, ?, ?, ?, ?, ?)
         """, (int(user_id), asset_name, category, round(invested_amount, 2), round(current_value, 2), update_date))
         conn.commit()
+        clear_app_cache()
         return cursor.lastrowid
 
 
+@st.cache_data(ttl=180, show_spinner=False)
 def get_investments(user_id: int = None, include_shared: bool = False):
     """
-    Lista os investimentos da carteira.
+    Lista os investimentos da carteira (otimizado com cache de 180s).
     POR PADRÃO (include_shared=False): filtra ESTRITAMENTE pelo próprio user_id logado.
     """
     query = """
@@ -768,6 +810,7 @@ def update_investment(
             WHERE id = ?
         """, (asset_name, category, round(invested_amount, 2), round(current_value, 2), update_date, investment_id))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
@@ -783,6 +826,7 @@ def delete_investment(investment_id: int, requesting_user_id: int = None) -> boo
 
         cursor.execute("DELETE FROM investments WHERE id = ?", (investment_id,))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
@@ -812,12 +856,14 @@ def set_budget(user_id_or_cat, category_or_limit, monthly_limit: float = None) -
             ON CONFLICT(user_id, category) DO UPDATE SET monthly_limit = excluded.monthly_limit
         """, (u_id, cat, round(lim, 2)))
         conn.commit()
+        clear_app_cache()
         return True
 
 
+@st.cache_data(ttl=180, show_spinner=False)
 def get_budgets(user_id: int = None, include_shared: bool = False):
     """
-    Lista todos os limites de orçamento configurados.
+    Lista todos os limites de orçamento configurados (otimizado com cache de 180s).
     POR PADRÃO (include_shared=False): filtra ESTRITAMENTE pelo próprio user_id logado.
     """
     query = """
@@ -862,6 +908,7 @@ def delete_budget(budget_id: int, requesting_user_id: int = None) -> bool:
 
         cursor.execute("DELETE FROM budgets WHERE id = ?", (budget_id,))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
@@ -869,8 +916,9 @@ def delete_budget(budget_id: int, requesting_user_id: int = None) -> bool:
 # CRUD: GESTÃO DE USUÁRIOS (users)
 # =====================================================================
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_users():
-    """Retorna lista de todos os usuários cadastrados (sem a senha)."""
+    """Retorna lista de todos os usuários cadastrados (otimizado com cache de 300s)."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -882,8 +930,9 @@ def get_users():
         return [dict(r) for r in rows]
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_user_profile(user_id: int) -> dict | None:
-    """Busca o perfil completo do usuário pelo ID."""
+    """Busca o perfil completo do usuário pelo ID (otimizado com cache de 300s)."""
     return get_user_by_id(user_id)
 
 
@@ -905,6 +954,7 @@ def add_user(username: str, password: str, role: str = "editor",
             cpf.strip() if cpf else None
         ))
         conn.commit()
+        clear_app_cache()
         return cursor.lastrowid
 
 
@@ -923,6 +973,7 @@ def update_user_profile(user_id: int, full_name: str = None, address: str = None
             int(user_id)
         ))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
@@ -932,6 +983,7 @@ def update_user_role(user_id: int, new_role: str) -> bool:
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET role = ? WHERE id = ?", (new_role, int(user_id)))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
@@ -941,6 +993,7 @@ def delete_user(user_id: int) -> bool:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM users WHERE id = ?", (int(user_id),))
         conn.commit()
+        clear_app_cache()
         return cursor.rowcount > 0
 
 
@@ -949,7 +1002,10 @@ def change_user_password(user_id: int, current_password: str, new_password: str)
     Permite que o usuário autenticado altere sua própria senha fornecendo a senha atual.
     Valida a senha atual via hash SHA-256 e grava a nova senha.
     """
-    return change_password_with_verification(user_id, current_password, new_password)
+    res = change_password_with_verification(user_id, current_password, new_password)
+    if res[0]:
+        clear_app_cache()
+    return res
 
 
 def admin_set_user_password(admin_user_id: int, target_user_id: int, new_password: str) -> tuple[bool, str]:
@@ -976,6 +1032,7 @@ def admin_set_user_password(admin_user_id: int, target_user_id: int, new_passwor
     try:
         ok = update_user_password(target_user_id, new_password.strip())
         if ok:
+            clear_app_cache()
             return True, f"Senha do usuário '{target_row['username']}' atualizada com sucesso!"
         return False, "Não foi possível atualizar a senha."
     except Exception as e:
