@@ -597,13 +597,13 @@ def export_transactions_to_excel(transactions: list) -> bytes:
 # =====================================================================
 
 def analyze_finances_with_ai(
-    month_year: str,
-    transactions: list,
+    month_year: str = None,
+    transactions: list = None,
     budgets: list = None,
     user_question: str = None
 ) -> str:
     """
-    Analisa os gastos reais do mês utilizando o SDK oficial google-genai.
+    Analisa os gastos do mês ou consolidados de todo o histórico utilizando o SDK oficial google-genai.
     Gera diagnóstico financeiro, alertas de orçamento e recomendações personalizadas.
     """
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -626,8 +626,15 @@ def analyze_finances_with_ai(
     except ImportError:
         return "❌ Pacote `google-genai` não encontrado no ambiente virtual."
 
-    # Agregação dos dados do mês
-    month_trans = [t for t in transactions if str(t.get("due_date", ""))[:7] == month_year]
+    transactions = transactions or []
+    # Agregação dos dados (Mês específico ou Todo o Histórico Geral)
+    if month_year and str(month_year).lower() != "geral" and str(month_year) != "Todo o Histórico":
+        month_trans = [t for t in transactions if str(t.get("due_date", ""))[:7] == str(month_year)]
+        titulo_periodo = f"MÊS DE REFERÊNCIA ({month_year})"
+    else:
+        month_trans = transactions
+        titulo_periodo = "TODO O HISTÓRICO CONSOLIDADO (GERAL)"
+
     total_despesas = sum(t["amount"] for t in month_trans if t.get("type") == "despesa")
     total_receitas = sum(t["amount"] for t in month_trans if t.get("type") == "receita")
     saldo = total_receitas - total_despesas
@@ -652,26 +659,26 @@ def analyze_finances_with_ai(
             comparativo_orcamento.append(f"- **{cat}**: Gasto R$ {gasto:.2f} de teto R$ {limite:.2f} ({pct:.1f}%)" + (" 🚨 ESTOURO!" if gasto > limite else ""))
 
     prompt = f"""
-Você é um Consultor Financeiro Pessoal Sênior e Estrategista de Patrimônio.
-Analise os dados financeiros reais do mês {month_year} detalhados abaixo:
+Você é um Consultor Financeiro Pessoal Sênior e Estrategista de Patrimônio do aplicativo 'Controle Financeiro'.
+Analise os dados financeiros reais detalhados abaixo:
 
-### RESUMO GERAL DO MÊS ({month_year}):
+### RESUMO FINANCEIRO - {titulo_periodo}:
 - Receita Total: R$ {total_receitas:,.2f}
 - Despesa Total: R$ {total_despesas:,.2f}
-- Saldo Previsto: R$ {saldo:,.2f}
-- Despesas Quitadas: R$ {despesas_pagas:,.2f}
-- Despesas Pendentes: R$ {despesas_pendentes:,.2f}
+- Saldo Líquido: R$ {saldo:,.2f}
+- Despesas Quitadas/Pagas: R$ {despesas_pagas:,.2f}
+- Despesas Pendentes/A Pagar: R$ {despesas_pendentes:,.2f}
 
-### GASTOS POR CATEGORIA:
-{chr(10).join([f"- {cat}: R$ {val:,.2f}" for cat, val in sorted(cat_gastos.items(), key=lambda x: x[1], reverse=True)]) or "Nenhum gasto registrado neste mês."}
+### MAIORES GASTOS POR CATEGORIA:
+{chr(10).join([f"- {cat}: R$ {val:,.2f}" for cat, val in sorted(cat_gastos.items(), key=lambda x: x[1], reverse=True)[:8]]) or "Nenhum gasto registrado neste período."}
 
 ### STATUS DOS LIMITES DE ORÇAMENTO:
 {chr(10).join(comparativo_orcamento) if comparativo_orcamento else "Nenhum teto de orçamento cadastrado para as categorias gastas."}
 
 ### INSTRUÇÕES:
-1. Forneça um diagnóstico direto e objetivo da saúde financeira deste mês.
+1. Forneça um diagnóstico direto, acolhedor e objetivo da saúde financeira do usuário.
 2. Destaque pontos de atenção crítica (categorias que mais pesaram ou orçamentos estourados).
-3. Sugira 3 ações práticas e imediatas de corte ou otimização para poupar mais.
+3. Sugira 3 ações práticas e imediatas para corte de gastos ou aumento da poupança.
 4. Mantenha um tom profissional, encorajador e consultivo em formato Markdown legível.
 """
     if user_question:
@@ -697,20 +704,142 @@ Analise os dados financeiros reais do mês {month_year} detalhados abaixo:
             except Exception as e:
                 err_str = str(e)
                 last_error = err_str
-                # Se for erro de indisponibilidade transitória (503, 429, overload, etc.)
                 is_transient = any(code in err_str.upper() for code in ["503", "UNAVAILABLE", "OVERLOADED", "RESOURCE_EXHAUSTED", "429", "DEADLINE_EXCEEDED"])
                 if is_transient and attempt < 3:
                     time.sleep(1.2 * attempt)
                     continue
                 else:
-                    # Se não for erro transitório ou já esgotou tentativas desse modelo, tenta o próximo modelo
                     break
 
-    # Se todos os modelos e tentativas falharem
     return (
         "⚠️ **Serviço de IA Temporariamente Indisponível (Pico de Demanda)**\n\n"
         "Os servidores do Google Gemini estão enfrentando uma alta demanda no momento (código 503 / indisponibilidade temporária).\n\n"
         "O sistema realizou tentativas automáticas com modelos alternativos, mas a capacidade da API continua momentaneamente congestionada.\n\n"
-        "💡 **O que fazer:** Aguarde de 30 a 60 segundos e clique novamente no botão **'🚀 Gerar Diagnóstico Financeiro'**.\n\n"
+        "💡 **O que fazer:** Aguarde de 30 a 60 segundos e tente novamente.\n\n"
         f"<small style='color:#8b949e;'>Diagnóstico técnico: {last_error}</small>"
     )
+
+
+def chat_with_financial_ai(
+    user_prompt: str,
+    conversation_history: list[dict] = None,
+    transactions: list = None,
+    budgets: list = None,
+    investments: list = None,
+    user_name: str = "Usuário"
+) -> str:
+    """
+    Chat conversacional interativo com o Consultor Financeiro Gemini para o Drawer Lateral.
+    Recebe a pergunta do usuário, o histórico do chat e alimenta o modelo com o contexto financeiro em tempo real.
+    """
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        try:
+            import streamlit as st
+            api_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
+        except Exception:
+            pass
+
+    if not api_key or api_key == "sua_chave_aqui":
+        return (
+            "⚠️ **Chave do Google Gemini não encontrada!**\n\n"
+            "Para conversar comigo, informe sua chave nos Secrets do Streamlit Cloud ou na página de **Configurações & Perfil** do sistema."
+        )
+
+    try:
+        from google import genai
+    except ImportError:
+        return "❌ Pacote `google-genai` não encontrado no ambiente virtual."
+
+    transactions = transactions or []
+    budgets = budgets or []
+    investments = investments or []
+
+    # Métricas consolidadas em tempo real
+    tot_receitas = sum(t["amount"] for t in transactions if t.get("type") == "receita")
+    tot_despesas = sum(t["amount"] for t in transactions if t.get("type") == "despesa")
+    saldo_geral = tot_receitas - tot_despesas
+    desp_pendentes = [t for t in transactions if t.get("type") == "despesa" and t.get("status") == "Pendente"]
+    tot_pendente = sum(t["amount"] for t in desp_pendentes)
+    tot_investido = sum(i["current_value"] for i in investments)
+
+    # Maiores categorias de despesa
+    cat_gastos = {}
+    for t in transactions:
+        if t.get("type") == "despesa":
+            c = t.get("category", "Outros")
+            cat_gastos[c] = cat_gastos.get(c, 0.0) + t["amount"]
+    top_cats = sorted(cat_gastos.items(), key=lambda x: x[1], reverse=True)[:5]
+    top_cats_str = ", ".join([f"{c} (R$ {v:,.2f})" for c, v in top_cats]) if top_cats else "Nenhuma despesa"
+
+    # Próximas contas pendentes a vencer
+    desp_pendentes_ordenadas = sorted(desp_pendentes, key=lambda x: str(x.get("due_date", "9999-99-99")))[:4]
+    proximas_contas_str = "; ".join([f"{t['description']} (R$ {t['amount']:,.2f} vence em {t.get('due_date', 'N/D')})" for t in desp_pendentes_ordenadas]) or "Nenhuma conta pendente"
+
+    # Contexto financeiro do usuário
+    system_instruction = f"""
+Você é o Consultor Financeiro Pessoal inteligente integrado ao aplicativo 'Controle Financeiro'.
+Você está conversando diretamente com {user_name} através do chat lateral de suporte.
+
+DADOS FINANCEIROS EM TEMPO REAL DO USUÁRIO:
+- Saldo Consolidado Acumulado: R$ {saldo_geral:,.2f}
+- Total Histórico de Receitas: R$ {tot_receitas:,.2f}
+- Total Histórico de Despesas: R$ {tot_despesas:,.2f}
+- Contas Pendentes a Pagar: {len(desp_pendentes)} contas somando R$ {tot_pendente:,.2f}
+- Próximos Vencimentos Imediatos: {proximas_contas_str}
+- Maiores Categorias de Despesa: {top_cats_str}
+- Patrimônio em Investimentos: R$ {tot_investido:,.2f}
+
+DIRETRIZES DE RESPOSTA:
+1. Responda de forma objetiva, acolhedora, encorajadora e humanizada.
+2. Sempre que relevante, use os números reais do usuário para fundamentar sua resposta.
+3. Se o usuário perguntar sobre saldo, contas a vencer, metas ou dicas de economia, forneça respostas práticas e diretas.
+4. Use formatação Markdown (negrito, listas, tópicos) de leitura rápida e visual limpo.
+"""
+
+    # Monta histórico de mensagens para envio
+    chat_prompt = system_instruction + "\n\n"
+    if conversation_history:
+        # Pega as últimas 6 mensagens para manter foco e economia de tokens
+        recent_history = conversation_history[-6:]
+        chat_prompt += "HISTÓRICO DA CONVERSA RECENTE:\n"
+        for m in recent_history:
+            role_label = "Usuário" if m.get("role") == "user" else "Consultor IA"
+            chat_prompt += f"{role_label}: {m.get('content', '')}\n"
+        chat_prompt += "\n"
+
+    chat_prompt += f"Pergunta atual de {user_name}: {user_prompt}\nConsultor IA:"
+
+    models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    last_error = ""
+
+    try:
+        client = genai.Client(api_key=api_key)
+    except Exception as e:
+        return f"⚠️ Erro ao inicializar assistente Gemini: {e}"
+
+    for model_name in models_to_try:
+        for attempt in range(1, 3):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=chat_prompt
+                )
+                if response and response.text:
+                    return response.text.strip()
+            except Exception as e:
+                err_str = str(e)
+                last_error = err_str
+                is_transient = any(code in err_str.upper() for code in ["503", "UNAVAILABLE", "OVERLOADED", "RESOURCE_EXHAUSTED", "429", "DEADLINE_EXCEEDED"])
+                if is_transient and attempt < 2:
+                    time.sleep(1.0)
+                    continue
+                else:
+                    break
+
+    return (
+        "⚠️ **Serviço de IA Temporariamente Ocupado**\n\n"
+        "Não foi possível obter uma resposta imediata devido à alta demanda nos servidores da IA. "
+        "Por favor, aguarde alguns instantes e tente enviar sua pergunta novamente."
+    )
+

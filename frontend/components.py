@@ -4,13 +4,14 @@ from datetime import date, datetime
 from backend.database import get_connection
 from backend.crud import (
     add_transaction, add_recurring_bill, update_transaction, update_recurring_bill,
-    delete_transactions_by_month, get_transactions
+    delete_transactions_by_month, get_transactions, get_budgets, get_investments
 )
 from backend.utils import (
     CATEGORIAS_DESPESA,
     CATEGORIAS_RECEITA,
     save_invoice_image,
-    decode_qr_code
+    decode_qr_code,
+    chat_with_financial_ai
 )
 
 
@@ -119,8 +120,80 @@ def apply_custom_css():
             margin: 1.2rem 0 !important;
             border-color: rgba(255, 255, 255, 0.08) !important;
         }
+
+        /* ========================================================= */
+        /* BOTÃO FLUTUANTE DE IA (CANTO INFERIOR DIREITO)             */
+        /* ========================================================= */
+        div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker) {
+            position: fixed !important;
+            bottom: 24px !important;
+            right: 24px !important;
+            z-index: 999999 !important;
+            width: auto !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker) button {
+            width: 60px !important;
+            height: 60px !important;
+            border-radius: 50% !important;
+            background: linear-gradient(135deg, #1f6feb 0%, #238636 100%) !important;
+            color: #ffffff !important;
+            border: 2px solid rgba(255, 255, 255, 0.4) !important;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 16px rgba(35, 134, 54, 0.6) !important;
+            font-size: 1.3rem !important;
+            font-weight: 700 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 0 !important;
+            transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker) button:hover {
+            transform: scale(1.1) rotate(6deg) !important;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7), 0 0 24px rgba(35, 134, 54, 0.85) !important;
+            border-color: #58a6ff !important;
+        }
+
+        /* ========================================================= */
+        /* CHAT LATERAL DESLIZANTE (DRAWER DE IA)                    */
+        /* ========================================================= */
+        div[data-testid="stVerticalBlock"]:has(> div #ai-drawer-marker) {
+            position: fixed !important;
+            top: 0 !important;
+            right: 0 !important;
+            width: 440px !important;
+            max-width: 92vw !important;
+            height: 100vh !important;
+            background-color: #0d1117 !important;
+            border-left: 1px solid rgba(255, 255, 255, 0.15) !important;
+            box-shadow: -10px 0 35px rgba(0, 0, 0, 0.75) !important;
+            z-index: 999990 !important;
+            padding: 1.2rem 1.2rem 2.5rem 1.2rem !important;
+            overflow-y: auto !important;
+            animation: drawerSlideInRight 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        }
+        @keyframes drawerSlideInRight {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Card do Filtro Global Padronizado */
+        .filter-period-box {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 0.9rem 1.2rem;
+            margin-bottom: 1.2rem;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+        }
         </style>
     """, unsafe_allow_html=True)
+
 
 
 def render_metric_card(title: str, value: str, sub: str = "", color: str = "#3fb950", icon: str = ""):
@@ -725,6 +798,234 @@ def render_unified_filter_popover(
         filtrados = [t for t in filtrados if t.get("category") in sel_cats]
         
     return filtrados
+
+
+def render_standard_period_filter(
+    available_months: list[str], 
+    key_prefix: str = "filter_period",
+    default_mode_index: int = 0
+) -> dict:
+    """
+    Componente padronizado e flexível de filtro de período para o Dashboard e demais páginas.
+    Padrão do Sistema: Exibe os dados gerais consolidados de todo o histórico.
+    Opções:
+      1. 🌐 Todo o Histórico (Geral) - Padrão consolidado
+      2. 📅 Mês Específico - Seletor direto de mês/ano
+      3. 📆 Período Personalizado - Seletor tipo calendário (intervalo de/até)
+    Retorna dicionário com:
+      - mode: 'geral' | 'mes' | 'personalizado'
+      - start_date: str (YYYY-MM-DD) ou None
+      - end_date: str (YYYY-MM-DD) ou None
+      - month_year: str (YYYY-MM) ou None
+      - label: str explicativa do período ativo
+    """
+    opcoes_modo = [
+        "🌐 Todo o Histórico (Geral)",
+        "📅 Mês Específico",
+        "📆 Período Personalizado (Calendário)"
+    ]
+
+    col_m, col_v = st.columns([1.5, 2.5])
+
+    with col_m:
+        modo_sel = st.selectbox(
+            "Filtrar Período de Análise",
+            opcoes_modo,
+            index=default_mode_index,
+            key=f"{key_prefix}_modo_sel"
+        )
+
+    res = {
+        "mode": "geral",
+        "start_date": None,
+        "end_date": None,
+        "month_year": None,
+        "label": "Consolidado Geral (Todo o Histórico)"
+    }
+
+    with col_v:
+        if modo_sel == "🌐 Todo o Histórico (Geral)":
+            st.markdown(
+                "<div style='padding-top: 1.8rem; color: #8b949e; font-size: 0.9rem;'>"
+                "📊 Exibindo <b>métricas e balanço consolidados</b> de todo o seu histórico financeiro."
+                "</div>",
+                unsafe_allow_html=True
+            )
+            res = {
+                "mode": "geral",
+                "start_date": None,
+                "end_date": None,
+                "month_year": None,
+                "label": "Consolidado Geral (Todo o Histórico)"
+            }
+
+        elif modo_sel == "📅 Mês Específico":
+            hoje = date.today()
+            mes_atual_str = hoje.strftime("%Y-%m")
+            meses_validos = list(available_months)
+            if mes_atual_str not in meses_validos:
+                meses_validos.insert(0, mes_atual_str)
+            meses_validos = sorted(list(set(meses_validos)), reverse=True)
+
+            idx_default = meses_validos.index(mes_atual_str) if mes_atual_str in meses_validos else 0
+            mes_escolhido = st.selectbox("Selecione o Mês (YYYY-MM)", meses_validos, index=idx_default, key=f"{key_prefix}_mes_sel")
+            res = {
+                "mode": "mes",
+                "start_date": None,
+                "end_date": None,
+                "month_year": mes_escolhido,
+                "label": f"Mês de Referência: {mes_escolhido}"
+            }
+
+        elif modo_sel == "📆 Período Personalizado (Calendário)":
+            c_d1, c_d2 = st.columns(2)
+            with c_d1:
+                hoje = date.today()
+                dt_ini_val = hoje.replace(day=1)
+                dt_ini = st.date_input("De (Data Inicial)", value=dt_ini_val, format="DD/MM/YYYY", key=f"{key_prefix}_dt_ini")
+            with c_d2:
+                dt_fim = st.date_input("Até (Data Final)", value=hoje, format="DD/MM/YYYY", key=f"{key_prefix}_dt_fim")
+
+            ini_str = dt_ini.strftime("%Y-%m-%d")
+            fim_str = dt_fim.strftime("%Y-%m-%d")
+            res = {
+                "mode": "personalizado",
+                "start_date": ini_str,
+                "end_date": fim_str,
+                "month_year": None,
+                "label": f"Período: {dt_ini.strftime('%d/%m/%Y')} até {dt_fim.strftime('%d/%m/%Y')}"
+            }
+
+    return res
+
+
+def render_floating_ai_assistant(user: dict):
+    """
+    Renderiza o botão flutuante estilizado no canto inferior direito e o chat lateral deslizante (drawer).
+    Regra de Fechamento Automático: O menu lateral principal fecha automaticamente quando o drawer abre (e vice-versa).
+    """
+    if "ai_chat_open" not in st.session_state:
+        st.session_state["ai_chat_open"] = False
+    if "ai_chat_messages" not in st.session_state:
+        st.session_state["ai_chat_messages"] = []
+
+    is_open = st.session_state["ai_chat_open"]
+
+    # 1. Injeção condicional de estilo para fechar o sidebar principal quando o drawer de IA estiver aberto
+    if is_open:
+        st.markdown("""
+            <style>
+            section[data-testid="stSidebar"] {
+                display: none !important;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
+    # 2. Botão Flutuante (FAB) fixo no canto inferior direito
+    with st.container():
+        st.markdown('<div id="floating-ai-marker"></div>', unsafe_allow_html=True)
+        fab_label = "✖" if is_open else "🤖"
+        fab_help = "Fechar Consultor IA" if is_open else "Abrir Consultor Financeiro IA (Google Gemini)"
+        if st.button(fab_label, key="btn_floating_ai_trigger", help=fab_help):
+            st.session_state["ai_chat_open"] = not is_open
+            st.rerun()
+
+    # 3. Drawer Lateral Deslizante de IA (Chat Lateral)
+    if is_open:
+        with st.container():
+            st.markdown('<div id="ai-drawer-marker"></div>', unsafe_allow_html=True)
+
+            # Cabeçalho do Drawer
+            col_h1, col_h2 = st.columns([3.5, 1.2])
+            with col_h1:
+                st.markdown("""
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <h3 style="margin: 0; font-size: 1.2rem; color: #ffffff;">🤖 Consultor IA</h3>
+                        <span style="background: rgba(35, 134, 54, 0.2); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.4); padding: 2px 6px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;">Online (Gemini)</span>
+                    </div>
+                    <small style="color: #8b949e;">Análise e suporte financeiro personalizado</small>
+                """, unsafe_allow_html=True)
+            with col_h2:
+                if st.button("✖ Fechar", key="btn_close_ai_drawer", help="Fechar chat lateral"):
+                    st.session_state["ai_chat_open"] = False
+                    st.rerun()
+
+            st.markdown("<hr style='margin: 0.7rem 0;'>", unsafe_allow_html=True)
+
+            # Sugestões Rápidas de Pergunta (Chips)
+            st.caption("💡 Perguntas Rápidas:")
+            c_s1, c_s2 = st.columns(2)
+            prompt_chip = None
+            with c_s1:
+                if st.button("💰 Saldo Acumulado", key="chip_saldo", width="stretch"):
+                    prompt_chip = "Como está o meu saldo acumulado e a relação entre minhas receitas e despesas?"
+                if st.button("🚨 Contas a Vencer", key="chip_vencimentos", width="stretch"):
+                    prompt_chip = "Tenho contas a pagar vencendo em breve? O que preciso priorizar?"
+            with c_s2:
+                if st.button("📊 Maiores Gastos", key="chip_despesas", width="stretch"):
+                    prompt_chip = "Quais categorias representam meus maiores gastos históricos?"
+                if st.button("💡 Dicas para Poupar", key="chip_dicas", width="stretch"):
+                    prompt_chip = "Com base no meu histórico financeiro, quais 3 dicas práticas você me dá para economizar?"
+
+            st.markdown("<hr style='margin: 0.5rem 0;'>", unsafe_allow_html=True)
+
+            # Histórico de Mensagens
+            if not st.session_state["ai_chat_messages"]:
+                nome_u = user.get("username", "Usuário")
+                st.markdown(f"""
+                    <div style="background: rgba(255, 255, 255, 0.03); border: 1px dashed rgba(255, 255, 255, 0.15); border-radius: 10px; padding: 0.9rem; text-align: center; margin-bottom: 0.8rem;">
+                        <p style="margin: 0; color: #c9d1d9; font-size: 0.9rem;">
+                            Olá, <strong>{nome_u}</strong>! 👋<br>
+                            Sou seu consultor de patrimônio inteligente. Analiso suas receitas, despesas e metas em tempo real.
+                        </p>
+                        <small style="color: #8b949e;">Clique em uma pergunta acima ou digite abaixo.</small>
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                for msg in st.session_state["ai_chat_messages"]:
+                    avatar = "👤" if msg["role"] == "user" else "🤖"
+                    with st.chat_message(msg["role"], avatar=avatar):
+                        st.markdown(msg["content"])
+
+            # Formulário de Envio
+            with st.form("form_chat_ai_drawer", clear_on_submit=True):
+                user_input = st.text_input(
+                    "Sua pergunta:", 
+                    placeholder="Digite sua dúvida ou peça uma análise...", 
+                    label_visibility="collapsed",
+                    key="input_chat_drawer"
+                )
+                col_f1, col_f2 = st.columns([1.5, 2.5])
+                with col_f1:
+                    limpar = st.form_submit_button("🗑️ Limpar", type="secondary", width="stretch")
+                with col_f2:
+                    enviar = st.form_submit_button("Enviar 🚀", type="primary", width="stretch")
+
+            if limpar:
+                st.session_state["ai_chat_messages"] = []
+                st.rerun()
+
+            pergunta_final = prompt_chip or (user_input.strip() if enviar and user_input.strip() else None)
+
+            if pergunta_final:
+                st.session_state["ai_chat_messages"].append({"role": "user", "content": pergunta_final})
+                
+                with st.spinner("Consultor IA analisando suas finanças..."):
+                    all_trans = get_transactions(user_id=user["id"])
+                    all_budgets = get_budgets(user_id=user["id"])
+                    all_investments = get_investments(user_id=user["id"])
+                    
+                    resposta = chat_with_financial_ai(
+                        user_prompt=pergunta_final,
+                        conversation_history=st.session_state["ai_chat_messages"],
+                        transactions=all_trans,
+                        budgets=all_budgets,
+                        investments=all_investments,
+                        user_name=user.get("full_name") or user.get("username") or "Usuário"
+                    )
+                    st.session_state["ai_chat_messages"].append({"role": "assistant", "content": resposta})
+                st.rerun()
+
 
 
 

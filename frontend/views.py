@@ -26,7 +26,8 @@ from backend.utils import (
 from frontend.components import (
     render_metric_card, modal_nova_movimentacao, modal_nova_conta_recorrente,
     modal_editar_movimentacao, modal_editar_conta_recorrente,
-    modal_excluir_mes_completo, render_unified_filter_popover
+    modal_excluir_mes_completo, render_unified_filter_popover,
+    render_standard_period_filter, render_floating_ai_assistant
 )
 
 
@@ -180,30 +181,46 @@ def view_dashboard(user: dict):
     # Alerta de Vencimento Imediato no topo do Dashboard
     render_due_date_alerts(user)
 
-    # Seletor de período e Ação Rápida
-    col_per1, col_per2 = st.columns([3, 1])
+    # 1. Carrega todas as movimentações do usuário para apurar meses e consolidado geral
+    all_user_trans = get_transactions(user_id=user["id"])
+    meses_com_dados = sorted(list(set(str(t["due_date"])[:7] for t in all_user_trans if t.get("due_date"))), reverse=True)
+    hoje = date.today()
+    mes_atual_str = hoje.strftime("%Y-%m")
+    if mes_atual_str not in meses_com_dados:
+        meses_com_dados.insert(0, mes_atual_str)
+
+    # 2. Seletor de Período Padronizado (Padrão: 🌐 Todo o Histórico Geral)
+    col_per1, col_per2 = st.columns([3.5, 1])
     with col_per1:
-        hoje = date.today()
-        mes_atual_str = hoje.strftime("%Y-%m")
-        # Gera opções dos últimos 12 meses
-        meses_opcoes = [datetime(hoje.year, m, 1).strftime("%Y-%m") for m in range(1, 13)]
-        if mes_atual_str not in meses_opcoes:
-            meses_opcoes.append(mes_atual_str)
-        meses_opcoes = sorted(list(set(meses_opcoes)), reverse=True)
-        mes_sel = st.selectbox("Selecione o Mês de Referência", meses_opcoes, index=meses_opcoes.index(mes_atual_str) if mes_atual_str in meses_opcoes else 0)
+        filtro_periodo = render_standard_period_filter(
+            available_months=meses_com_dados,
+            key_prefix="dash_period",
+            default_mode_index=0  # Padrão: 🌐 Todo o Histórico (Geral)
+        )
     with col_per2:
         st.write("")
         st.write("")
         if st.button("➕ Nova Movimentação", type="primary", width='stretch', key="btn_dash_nova_mov"):
             modal_nova_movimentacao(user["id"])
 
-    # Carrega transações estritamente do mês de referência para o usuário logado
-    trans_mes = get_transactions(user_id=user["id"], month_year=mes_sel)
+    # 3. Filtragem das movimentações para apuração dos indicadores
+    if filtro_periodo["mode"] == "geral":
+        trans_ativas = all_user_trans
+        sub_rotulo = "histórico consolidado"
+    elif filtro_periodo["mode"] == "mes":
+        m_sel = filtro_periodo["month_year"]
+        trans_ativas = [t for t in all_user_trans if str(t.get("due_date", ""))[:7] == m_sel]
+        sub_rotulo = f"mês {m_sel}"
+    else:  # personalizado
+        d_ini = filtro_periodo["start_date"]
+        d_fim = filtro_periodo["end_date"]
+        trans_ativas = [t for t in all_user_trans if d_ini <= str(t.get("due_date", "")) <= d_fim]
+        sub_rotulo = "período selecionado"
 
     # Cálculos
-    receitas_total = sum(t["amount"] for t in trans_mes if t["type"] == "receita")
-    despesas_total = sum(t["amount"] for t in trans_mes if t["type"] == "despesa")
-    saldo_mes = receitas_total - despesas_total
+    receitas_total = sum(t["amount"] for t in trans_ativas if t["type"] == "receita")
+    despesas_total = sum(t["amount"] for t in trans_ativas if t["type"] == "despesa")
+    saldo_periodo = receitas_total - despesas_total
 
     investimentos = get_investments(user_id=user["id"])
     total_investido = sum(i["current_value"] for i in investimentos)
@@ -213,28 +230,28 @@ def view_dashboard(user: dict):
     # Cards de Resumo
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        render_metric_card("Receitas", f"R$ {receitas_total:,.2f}", "Entradas no mês", "#3fb950", "🟢")
+        render_metric_card("Receitas", f"R$ {receitas_total:,.2f}", f"Entradas ({sub_rotulo})", "#3fb950", "🟢")
     with c2:
-        render_metric_card("Despesas", f"R$ {despesas_total:,.2f}", "Saídas no mês", "#f85149", "🔴")
+        render_metric_card("Despesas", f"R$ {despesas_total:,.2f}", f"Saídas ({sub_rotulo})", "#f85149", "🔴")
     with c3:
-        cor_saldo = "#3fb950" if saldo_mes >= 0 else "#f85149"
-        render_metric_card("Saldo Líquido", f"R$ {saldo_mes:,.2f}", "Balanço mensal", cor_saldo, "💰")
+        cor_saldo = "#3fb950" if saldo_periodo >= 0 else "#f85149"
+        render_metric_card("Saldo Líquido", f"R$ {saldo_periodo:,.2f}", f"Balanço ({sub_rotulo})", cor_saldo, "💰")
     with c4:
         render_metric_card("Investimentos", f"R$ {total_investido:,.2f}", "Patrimônio ativo", "#58a6ff", "📈")
     with c5:
         cor_tx = "#3fb950" if taxa_poupanca >= 20 else ("#e3b341" if taxa_poupanca >= 0 else "#f85149")
-        render_metric_card("Poupança", f"{taxa_poupanca:.1f}%", "Taxa do mês", cor_tx, "🛡️")
+        render_metric_card("Poupança", f"{taxa_poupanca:.1f}%", f"Taxa ({sub_rotulo})", cor_tx, "🛡️")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Gráficos Interativos em Plotly
     g_col1, g_col2 = st.columns([1, 1])
 
-    despesas_mes = [t for t in trans_mes if t["type"] == "despesa"]
+    despesas_ativas = [t for t in trans_ativas if t["type"] == "despesa"]
     with g_col1:
         st.subheader("Despesas por Categoria")
-        if despesas_mes:
-            df_desp = pd.DataFrame(despesas_mes)
+        if despesas_ativas:
+            df_desp = pd.DataFrame(despesas_ativas)
             df_cat = df_desp.groupby("category")["amount"].sum().reset_index()
             fig_pie = px.pie(
                 df_cat,
@@ -252,7 +269,7 @@ def view_dashboard(user: dict):
             )
             st.plotly_chart(fig_pie, width='stretch')
         else:
-            st.info("Nenhuma despesa registrada para o mês selecionado.")
+            st.info("Nenhuma despesa registrada para o período selecionado.")
 
     with g_col2:
         st.subheader("Receitas vs Despesas")
@@ -276,17 +293,46 @@ def view_dashboard(user: dict):
         )
         st.plotly_chart(fig_bar, width='stretch')
 
+    # Evolução Temporal Mensal no modo consolidado geral
+    if filtro_periodo["mode"] == "geral" and len(trans_ativas) > 0:
+        df_all = pd.DataFrame(trans_ativas)
+        if "due_date" in df_all.columns and not df_all.empty:
+            df_all["mes_ano"] = df_all["due_date"].astype(str).str[:7]
+            meses_distintos = df_all["mes_ano"].nunique()
+            if meses_distintos > 1:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.subheader("📈 Evolução Temporal Mensal (Histórico Consolidado)")
+                evol_grp = df_all.groupby(["mes_ano", "type"])["amount"].sum().reset_index()
+                evol_grp = evol_grp.sort_values("mes_ano")
+                evol_grp["type_label"] = evol_grp["type"].apply(lambda x: "Receitas" if x == "receita" else "Despesas")
+                fig_evol = px.bar(
+                    evol_grp,
+                    x="mes_ano",
+                    y="amount",
+                    color="type_label",
+                    barmode="group",
+                    color_discrete_map={"Receitas": "#3fb950", "Despesas": "#f85149"},
+                    labels={"mes_ano": "Mês", "amount": "Total (R$)", "type_label": "Tipo"}
+                )
+                fig_evol.update_layout(
+                    margin=dict(t=20, b=20, l=10, r=10),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    xaxis=dict(type="category")
+                )
+                st.plotly_chart(fig_evol, width='stretch')
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Listagem das Últimas Movimentações Pessoais
-    st.subheader("Últimos Lançamentos Pessoais")
-    if trans_mes:
-        df_ult = pd.DataFrame(trans_mes)[["due_date", "type", "category", "description", "amount", "status"]]
+    st.subheader(f"Últimos Lançamentos ({sub_rotulo.title()})")
+    if trans_ativas:
+        df_ult = pd.DataFrame(trans_ativas)[["due_date", "type", "category", "description", "amount", "status"]]
         df_ult.columns = ["Data", "Tipo", "Categoria", "Descrição", "Valor (R$)", "Status"]
         df_ult["Valor (R$)"] = df_ult["Valor (R$)"].apply(lambda x: f"R$ {x:,.2f}")
         st.dataframe(df_ult.head(10), width='stretch', hide_index=True)
     else:
-        st.caption("Nenhum lançamento encontrado no mês de referência.")
+        st.caption("Nenhum lançamento encontrado no período selecionado.")
 
 
 # =====================================================================
@@ -843,203 +889,181 @@ def view_investimentos_orcamentos(user: dict):
 # 6. VIEW: CONSULTOR IA & CONFIGURAÇÕES
 # =====================================================================
 
-def view_consultor_configuracoes(user: dict):
-    st.title("🤖 Consultor Financeiro IA & Configurações")
+def view_configuracoes_perfil(user: dict):
+    st.title("⚙️ Configurações & Perfil")
+    st.caption("Gerenciamento de dados cadastrais, chaves de integração, backups do banco e segurança.")
 
-    tab_ia, tab_conf = st.tabs(["💡 Consultor IA (Gemini)", "⚙️ Configurações, Perfil & Backup"])
+    # 1. PERFIL DO USUÁRIO
+    st.subheader("👤 Meu Perfil Cadastral")
+    st.caption("Mantenha seus dados atualizados. O nome de usuário é estritamente usado para login e identificação no partilhamento.")
 
-    # ---------------- ABA CONSULTOR IA ----------------
-    with tab_ia:
-        st.subheader("Análise Inteligente de Gastos com Gemini")
-        st.write("Receba diagnósticos precisos sobre seus padrões de consumo, alertas de metas estouradas e dicas práticas para poupar mais.")
+    perfil_atual = st.session_state.get("user") or user
 
-        hoje = date.today()
-        meses_opcoes = [datetime(hoje.year, m, 1).strftime("%Y-%m") for m in range(1, 13)]
-        mes_ia = st.selectbox("Mês para Análise da IA", sorted(list(set(meses_opcoes)), reverse=True), key="mes_ia")
-        duvida_usuario = st.text_area("Pergunta opcional para o Consultor IA", placeholder="Ex: Onde gastei demais este mês? Como economizar R$ 300 no próximo mês?")
+    with st.form("form_meu_perfil"):
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            st.text_input("Nome de Usuário (Login)", value=perfil_atual.get("username", ""), disabled=True, help="Identificador único para login e compartilhamento de espaços")
+            full_name_val = st.text_input("Nome Completo", value=perfil_atual.get("full_name") or "", placeholder="Ex: João da Silva")
+        with col_p2:
+            cpf_val = st.text_input("CPF / Documento", value=perfil_atual.get("cpf") or "", placeholder="000.000.000-00")
+            address_val = st.text_input("Endereço", value=perfil_atual.get("address") or "", placeholder="Ex: Rua das Flores, 123 - Cidade/UF")
 
-        if st.button("🚀 Gerar Diagnóstico Financeiro", type="primary"):
-            with st.spinner("O Consultor IA está analisando suas movimentações..."):
-                trans = get_transactions(user_id=user["id"])
-                buds = get_budgets(user_id=user["id"])
-                resposta = analyze_finances_with_ai(
-                    month_year=mes_ia,
-                    transactions=trans,
-                    budgets=buds,
-                    user_question=duvida_usuario.strip() or None
-                )
-                st.markdown("### 📋 Diagnóstico da IA")
-                st.markdown(resposta)
+        if st.form_submit_button("💾 Salvar Perfil", type="primary"):
+            ok = update_user_profile(
+                user_id=user["id"],
+                full_name=full_name_val,
+                address=address_val,
+                cpf=cpf_val
+            )
+            if ok:
+                user["full_name"] = full_name_val
+                user["address"] = address_val
+                user["cpf"] = cpf_val
+                st.session_state["user"] = user
+                st.success("✅ Informações de perfil atualizadas com sucesso!")
+                st.rerun()
+            else:
+                st.error("Não foi possível atualizar o perfil cadastral.")
 
-    # ---------------- ABA CONFIGURAÇÕES & PERFIL ----------------
-    with tab_conf:
-        # 1. PERFIL DO USUÁRIO
-        st.subheader("👤 Meu Perfil Cadastral")
-        st.caption("Mantenha seus dados atualizados. O nome de usuário é estritamente usado para login e identificação no partilhamento.")
+    st.markdown("---")
 
-        perfil_atual = st.session_state.get("user") or user
+    # 2. CHAVE DE API DO GEMINI
+    st.subheader("🔑 Chave de API do Gemini")
+    chave_atual = os.getenv("GEMINI_API_KEY", "")
+    if not chave_atual:
+        try:
+            chave_atual = str(st.secrets.get("GEMINI_API_KEY", ""))
+        except Exception:
+            pass
+    nova_chave = st.text_input("GEMINI_API_KEY", value=chave_atual if chave_atual != "sua_chave_aqui" else "", type="password")
+    if st.button("Salvar Chave"):
+        if nova_chave.strip():
+            env_path = BASE_DIR / ".env"
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.write(f'GEMINI_API_KEY="{nova_chave.strip()}"\n')
+            os.environ["GEMINI_API_KEY"] = nova_chave.strip()
+            st.success("Chave salva com sucesso no arquivo .env!")
+        else:
+            st.error("Informe uma chave válida.")
 
-        with st.form("form_meu_perfil"):
-            col_p1, col_p2 = st.columns(2)
-            with col_p1:
-                st.text_input("Nome de Usuário (Login)", value=perfil_atual.get("username", ""), disabled=True, help="Identificador único para login e compartilhamento de espaços")
-                full_name_val = st.text_input("Nome Completo", value=perfil_atual.get("full_name") or "", placeholder="Ex: João da Silva")
-            with col_p2:
-                cpf_val = st.text_input("CPF / Documento", value=perfil_atual.get("cpf") or "", placeholder="000.000.000-00")
-                address_val = st.text_input("Endereço", value=perfil_atual.get("address") or "", placeholder="Ex: Rua das Flores, 123 - Cidade/UF")
+    st.markdown("---")
 
-            if st.form_submit_button("💾 Salvar Perfil", type="primary"):
-                ok = update_user_profile(
-                    user_id=user["id"],
-                    full_name=full_name_val,
-                    address=address_val,
-                    cpf=cpf_val
-                )
+    # 3. BACKUP & RESTAURAÇÃO
+    st.subheader("💾 Backup & Restauração do Banco de Dados")
+    col_bk1, col_bk2 = st.columns(2)
+    with col_bk1:
+        st.markdown("##### ⬇️ Fazer Backup")
+        bk_bytes = get_db_backup_bytes()
+        st.download_button(
+            label="⬇️ Baixar Cópia do Banco (financas.db)",
+            data=bk_bytes,
+            file_name=f"financas_backup_{date.today().strftime('%Y%m%d')}.db",
+            mime="application/x-sqlite3",
+            width='stretch'
+        )
+    with col_bk2:
+        st.markdown("##### 🔄 Restaurar Banco")
+        restore_file = st.file_uploader("Carregue o arquivo financas.db", type=["db"])
+        if restore_file is not None:
+            if st.button("Confirmar Restauração", type="secondary", width='stretch'):
+                ok, msg = restore_db_from_bytes(restore_file.getvalue())
                 if ok:
-                    user["full_name"] = full_name_val
-                    user["address"] = address_val
-                    user["cpf"] = cpf_val
-                    st.session_state["user"] = user
-                    st.success("✅ Informações de perfil atualizadas com sucesso!")
+                    st.success(msg)
                     st.rerun()
                 else:
-                    st.error("Não foi possível atualizar o perfil cadastral.")
+                    st.error(msg)
 
-        st.markdown("---")
+    # 4. SEGURANÇA & ALTERAÇÃO DE SENHA
+    st.markdown("---")
+    st.subheader("🔐 Segurança & Alteração de Senha")
+    st.write(f"Altere a sua senha de acesso ao sistema (Usuário conectado: **{user['username']}**).")
 
-        # 2. CHAVE DE API DO GEMINI
-        st.subheader("🔑 Chave de API do Gemini")
-        chave_atual = os.getenv("GEMINI_API_KEY", "")
-        if not chave_atual:
-            try:
-                chave_atual = str(st.secrets.get("GEMINI_API_KEY", ""))
-            except Exception:
-                pass
-        nova_chave = st.text_input("GEMINI_API_KEY", value=chave_atual if chave_atual != "sua_chave_aqui" else "", type="password")
-        if st.button("Salvar Chave"):
-            if nova_chave.strip():
-                env_path = BASE_DIR / ".env"
-                with open(env_path, "w", encoding="utf-8") as f:
-                    f.write(f'GEMINI_API_KEY="{nova_chave.strip()}"\n')
-                os.environ["GEMINI_API_KEY"] = nova_chave.strip()
-                st.success("Chave salva com sucesso no arquivo .env!")
+    with st.form("form_alterar_propria_senha"):
+        col_s1, col_s2, col_s3 = st.columns(3)
+        with col_s1:
+            senha_atual = st.text_input("Senha Atual", type="password", key="sec_curr_pass")
+        with col_s2:
+            nova_senha = st.text_input("Nova Senha", type="password", help="Mínimo de 4 caracteres", key="sec_new_pass")
+        with col_s3:
+            confirma_nova = st.text_input("Confirmar Nova Senha", type="password", key="sec_conf_pass")
+
+        btn_trocar_senha = st.form_submit_button("Atualizar Minha Senha", type="primary")
+        if btn_trocar_senha:
+            if not senha_atual:
+                st.error("Por favor, informe sua senha atual.")
+            elif len(nova_senha.strip()) < 4:
+                st.error("A nova senha deve ter no mínimo 4 caracteres.")
+            elif nova_senha != confirma_nova:
+                st.error("A nova senha e a confirmação não coincidem.")
             else:
-                st.error("Informe uma chave válida.")
-
-        st.markdown("---")
-
-        # 3. BACKUP & RESTAURAÇÃO
-        st.subheader("💾 Backup & Restauração do Banco de Dados")
-        col_bk1, col_bk2 = st.columns(2)
-        with col_bk1:
-            st.markdown("##### ⬇️ Fazer Backup")
-            bk_bytes = get_db_backup_bytes()
-            st.download_button(
-                label="⬇️ Baixar Cópia do Banco (financas.db)",
-                data=bk_bytes,
-                file_name=f"financas_backup_{date.today().strftime('%Y%m%d')}.db",
-                mime="application/x-sqlite3",
-                width='stretch'
-            )
-        with col_bk2:
-            st.markdown("##### 🔄 Restaurar Banco")
-            restore_file = st.file_uploader("Carregue o arquivo financas.db", type=["db"])
-            if restore_file is not None:
-                if st.button("Confirmar Restauração", type="secondary", width='stretch'):
-                    ok, msg = restore_db_from_bytes(restore_file.getvalue())
-                    if ok:
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.error(msg)
-
-        # 4. SEGURANÇA & ALTERAÇÃO DE SENHA
-        st.markdown("---")
-        st.subheader("🔐 Segurança & Alteração de Senha")
-        st.write(f"Altere a sua senha de acesso ao sistema (Usuário conectado: **{user['username']}**).")
-
-        with st.form("form_alterar_propria_senha"):
-            col_s1, col_s2, col_s3 = st.columns(3)
-            with col_s1:
-                senha_atual = st.text_input("Senha Atual", type="password", key="sec_curr_pass")
-            with col_s2:
-                nova_senha = st.text_input("Nova Senha", type="password", help="Mínimo de 4 caracteres", key="sec_new_pass")
-            with col_s3:
-                confirma_nova = st.text_input("Confirmar Nova Senha", type="password", key="sec_conf_pass")
-
-            btn_trocar_senha = st.form_submit_button("Atualizar Minha Senha", type="primary")
-            if btn_trocar_senha:
-                if not senha_atual:
-                    st.error("Por favor, informe sua senha atual.")
-                elif len(nova_senha.strip()) < 4:
-                    st.error("A nova senha deve ter no mínimo 4 caracteres.")
-                elif nova_senha != confirma_nova:
-                    st.error("A nova senha e a confirmação não coincidem.")
+                ok, msg = change_user_password(user["id"], senha_atual, nova_senha)
+                if ok:
+                    st.success(msg)
                 else:
-                    ok, msg = change_user_password(user["id"], senha_atual, nova_senha)
-                    if ok:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
+                    st.error(msg)
 
-        # 5. GESTÃO DE USUÁRIOS (ADMIN)
-        if user.get("role") == "admin":
-            st.markdown("---")
-            st.subheader("👥 Gestão de Usuários")
-            users = get_users()
-            df_users = pd.DataFrame(users)[["id", "username", "full_name", "cpf", "role", "created_at"]]
-            df_users.columns = ["ID", "Usuário", "Nome Completo", "CPF", "Função", "Criado em"]
-            st.dataframe(df_users, width='stretch', hide_index=True)
+    # 5. GESTÃO DE USUÁRIOS (ADMIN)
+    if user.get("role") == "admin":
+        st.markdown("---")
+        st.subheader("👥 Gestão de Usuários")
+        users = get_users()
+        df_users = pd.DataFrame(users)[["id", "username", "full_name", "cpf", "role", "created_at"]]
+        df_users.columns = ["ID", "Usuário", "Nome Completo", "CPF", "Função", "Criado em"]
+        st.dataframe(df_users, width='stretch', hide_index=True)
 
-            col_adm_u1, col_adm_u2 = st.columns(2)
-            with col_adm_u1:
-                with st.expander("➕ Criar Novo Usuário"):
-                    with st.form("form_novo_user"):
-                        u_name = st.text_input("Nome de Usuário (Login) *")
-                        u_pass = st.text_input("Senha Inicial *", type="password")
-                        u_role = st.selectbox("Perfil / Permissão", ["editor", "viewer", "admin"])
-                        u_full_name = st.text_input("Nome Completo (Opcional)")
-                        u_cpf = st.text_input("CPF (Opcional)")
-                        u_address = st.text_input("Endereço (Opcional)")
-                        if st.form_submit_button("Criar Usuário", type="primary"):
-                            if u_name.strip() and u_pass.strip():
-                                try:
-                                    add_user(
-                                        username=u_name.strip(),
-                                        password=u_pass.strip(),
-                                        role=u_role,
-                                        full_name=u_full_name,
-                                        address=u_address,
-                                        cpf=u_cpf
-                                    )
-                                    st.success(f"Usuário '{u_name}' criado com sucesso!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Erro ao criar usuário: {e}")
+        col_adm_u1, col_adm_u2 = st.columns(2)
+        with col_adm_u1:
+            with st.expander("➕ Criar Novo Usuário"):
+                with st.form("form_novo_user"):
+                    u_name = st.text_input("Nome de Usuário (Login) *")
+                    u_pass = st.text_input("Senha Inicial *", type="password")
+                    u_role = st.selectbox("Perfil / Permissão", ["editor", "viewer", "admin"])
+                    u_full_name = st.text_input("Nome Completo (Opcional)")
+                    u_cpf = st.text_input("CPF (Opcional)")
+                    u_address = st.text_input("Endereço (Opcional)")
+                    if st.form_submit_button("Criar Usuário", type="primary"):
+                        if u_name.strip() and u_pass.strip():
+                            try:
+                                add_user(
+                                    username=u_name.strip(),
+                                    password=u_pass.strip(),
+                                    role=u_role,
+                                    full_name=u_full_name,
+                                    address=u_address,
+                                    cpf=u_cpf
+                                )
+                                st.success(f"Usuário '{u_name}' criado com sucesso!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro ao criar usuário: {e}")
+                        else:
+                            st.error("Preencha o nome de usuário e a senha.")
+
+        with col_adm_u2:
+            with st.expander("🔑 Redefinir Senha de Usuário (Admin)"):
+                with st.form("form_admin_reset_senha"):
+                    users_list = get_users()
+                    map_users_reset = {f"{u['username']} (ID: {u['id']} - {u['role'].upper()})": u["id"] for u in users_list}
+                    sel_user_label = st.selectbox("Usuário Alvo", list(map_users_reset.keys()), key="adm_reset_target")
+                    target_user_id = map_users_reset[sel_user_label]
+                    adm_new_pass = st.text_input("Nova Senha", type="password", key="adm_new_pass")
+                    adm_conf_pass = st.text_input("Confirmar Senha", type="password", key="adm_conf_pass")
+
+                    if st.form_submit_button("Redefinir Senha"):
+                        if len(adm_new_pass.strip()) < 4:
+                            st.error("A nova senha deve ter no mínimo 4 caracteres.")
+                        elif adm_new_pass != adm_conf_pass:
+                            st.error("As senhas não coincidem.")
+                        else:
+                            ok, msg = admin_set_user_password(user["id"], target_user_id, adm_new_pass)
+                            if ok:
+                                st.success(msg)
                             else:
-                                st.error("Preencha o nome de usuário e a senha.")
+                                st.error(msg)
 
-            with col_adm_u2:
-                with st.expander("🔑 Redefinir Senha de Usuário (Admin)"):
-                    with st.form("form_admin_reset_senha"):
-                        users_list = get_users()
-                        map_users_reset = {f"{u['username']} (ID: {u['id']} - {u['role'].upper()})": u["id"] for u in users_list}
-                        sel_user_label = st.selectbox("Usuário Alvo", list(map_users_reset.keys()), key="adm_reset_target")
-                        target_user_id = map_users_reset[sel_user_label]
-                        adm_new_pass = st.text_input("Nova Senha", type="password", key="adm_new_pass")
-                        adm_conf_pass = st.text_input("Confirmar Senha", type="password", key="adm_conf_pass")
 
-                        if st.form_submit_button("Redefinir Senha"):
-                            if len(adm_new_pass.strip()) < 4:
-                                st.error("A nova senha deve ter no mínimo 4 caracteres.")
-                            elif adm_new_pass != adm_conf_pass:
-                                st.error("As senhas não coincidem.")
-                            else:
-                                ok, msg = admin_set_user_password(user["id"], target_user_id, adm_new_pass)
-                                if ok:
-                                    st.success(msg)
-                                else:
-                                    st.error(msg)
+# Compatibilidade retrocompatível de nome
+view_consultor_configuracoes = view_configuracoes_perfil
 
 
 # =====================================================================

@@ -1,7 +1,7 @@
 import streamlit as st
 from backend.database import init_db, verify_user
 from backend.crud import process_recurring_bills
-from frontend.components import apply_custom_css, modal_nova_movimentacao
+from frontend.components import apply_custom_css, modal_nova_movimentacao, render_floating_ai_assistant
 from frontend.views import (
     view_dashboard,
     view_movimentacoes,
@@ -9,7 +9,7 @@ from frontend.views import (
     view_espacos_compartilhados,
     view_importacao_extratos,
     view_investimentos_orcamentos,
-    view_consultor_configuracoes
+    view_configuracoes_perfil
 )
 
 # 1. Configuração da Página do Streamlit
@@ -90,7 +90,7 @@ else:
 
         st.markdown("---")
 
-        # Menu de Navegação Vertical Profissional (sem bolinhas de rádio)
+        # Menu de Navegação Vertical Profissional
         if "pagina_ativa" not in st.session_state:
             st.session_state["pagina_ativa"] = "📊 Dashboard Geral"
 
@@ -101,7 +101,7 @@ else:
             ("🤝 Espaços Compartilhados", "btn_nav_espacos_compartilhados"),
             ("📄 Importar Extrato", "btn_nav_importar_extrato"),
             ("📈 Investimentos & Orçamentos", "btn_nav_investimentos"),
-            ("🤖 Consultor IA & Ajustes", "btn_nav_consultor_ia")
+            ("⚙️ Configurações & Perfil", "btn_nav_configuracoes")
         ]
 
         st.caption("NAVEGAÇÃO")
@@ -109,6 +109,8 @@ else:
             is_active = (st.session_state["pagina_ativa"] == nome_aba)
             tipo_btn = "primary" if is_active else "secondary"
             if st.button(nome_aba, key=btn_id, type=tipo_btn, width="stretch"):
+                # Regra de Fechamento Mútuo: Navegar fecha automaticamente o chat de IA
+                st.session_state["ai_chat_open"] = False
                 if st.session_state["pagina_ativa"] != nome_aba:
                     st.session_state["pagina_ativa"] = nome_aba
                     st.rerun()
@@ -118,6 +120,7 @@ else:
         st.markdown("---")
         if st.button("🚪 Sair do Sistema", width="stretch", key="btn_logout"):
             st.session_state["user"] = None
+            st.session_state["ai_chat_open"] = False
             st.rerun()
 
     # Roteamento de Telas
@@ -133,6 +136,9 @@ else:
         view_importacao_extratos(user)
     elif escolha == "📈 Investimentos & Orçamentos":
         view_investimentos_orcamentos(user)
-    elif escolha == "🤖 Consultor IA & Ajustes":
-        view_consultor_configuracoes(user)
+    elif escolha == "⚙️ Configurações & Perfil" or escolha == "🤖 Consultor IA & Ajustes":
+        view_configuracoes_perfil(user)
+
+    # Componente Global Fixo: Botão Flutuante de IA e Drawer Lateral Deslizante
+    render_floating_ai_assistant(user)
 

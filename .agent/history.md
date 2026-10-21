@@ -1,8 +1,12 @@
 # 📜 Histórico de Desenvolvimento - controle_financeiro
 
-Registro cronológico e técnico de todas as alterações, implementações e manutenções do projeto.
+> 🚨 **REGRA DE OURO MANDATÓRIA PARA AGENTES DE IA E DESENVOLVEDORES:**
+> **É ESTRITAMENTE OBRIGATÓRIO** consultar e ler integralmente este arquivo (`.agent/history.md`) **ANTES** de iniciar qualquer alteração, refatoração, implementação ou exclusão de código no projeto `controle_financeiro`.
+> Este documento contém o histórico completo de decisões de arquitetura, correções de bugs, esquemas de banco de dados, regras de negócio multi-usuário e integrações de nuvem (Turso Cloud e Google Gemini).
+> Ao concluir qualquer tarefa ou fase, é **OBRIGATÓRIO** atualizar este arquivo com um registro detalhado de todas as alterações realizadas, seguindo rigorosamente o padrão cronológico e técnico aqui estabelecido.
 
 ---
+
 
 ## [Fase 1] - 2026-10-16 - Leitura da Especificação e Inicialização do Projeto
 - **Status:** Concluída com sucesso.
@@ -755,5 +759,41 @@ Registro cronológico e técnico de todas as alterações, implementações e ma
     - `get_users()`: de 10.2ms para 0.083ms (122.0x mais rápido).
     - Invalidação automática após INSERT e DELETE validada com 100% de êxito.
   - Bateria completa de testes de regressão executada com 100% de aprovação (`teste_turso_cloud_completo.py`, `teste_fase1_sincronizacao_controlada.py`, `teste_fase2_alerta_vencimento.py`, `teste_fase7_evolucao_completa.py`).
+
+---
+
+## [Filtros Globais, Botão Flutuante e Chat Lateral de IA] - 2026-10-21 - Evolução de Usabilidade, Navegação e IA
+- **Status:** Concluído com sucesso (100% testado, validado e documentado).
+- **Ações Realizadas e Mudanças Arquiteturais:**
+  1. **Padronização de Filtros de Pesquisa Globais (`frontend/components.py` e `frontend/views.py`):**
+     - Criado o componente reutilizável `render_standard_period_filter(available_months, key_prefix, default_mode_index)`.
+     - **Padrão Oficial do Sistema:** Por padrão, a aplicação e o Dashboard exibem agora os **dados gerais consolidados de todo o histórico**, oferecendo visão panorâmica total do patrimônio acumulado, receitas totais, despesas totais e balanço completo.
+     - **Seletores Flexíveis:**
+       - `🌐 Todo o Histórico (Geral)`: Consolidação de todos os lançamentos históricos com gráfico exclusivo de **Evolução Temporal Mensal** em Plotly.
+       - `📅 Mês Específico`: Seletor direto de competência (`YYYY-MM`) com detecção automática de meses cadastrados e ordenação cronológica decrescente.
+       - `📆 Período Personalizado (Calendário)`: Seletor intuitivo de intervalo com datas inicial e final via `st.date_input`, permitindo filtrar quinzenas, trimestres ou intervalos customizados com precisão diária.
+     - Todas as métricas de cartões (`render_metric_card`), gráficos de pizza/donut, comparativos de barras e tabela de lançamentos adaptam-se instantaneamente ao filtro selecionado.
+  2. **Reorganização Estrutural da Inteligência Artificial (Google Gemini):**
+     - **Remoção da IA de Configurações:** A aba de consulta de IA foi completamente removida da página de configurações em `frontend/views.py`. A tela passou a se chamar `⚙️ Configurações & Perfil`, focando exclusivamente em Perfil Cadastral, Chave Gemini, Backup/Restauração de Banco, Segurança de Senhas e Gestão de Usuários.
+     - **Botão Flutuante Fixo (FAB - Floating Action Button):** Criado o componente `render_floating_ai_assistant` em `frontend/components.py`. O botão flutuante é fixo no canto inferior direito (`position: fixed; bottom: 24px; right: 24px; z-index: 999999;`), com formato circular, gradiente executivo moderno (`#1f6feb` a `#238636`), animação de hover, sombra com brilho verde neon e microinterações táteis.
+     - **Chat Lateral Deslizante (Drawer / Sidebar Dedicado):** Ao clicar no botão flutuante, abre-se um painel lateral deslizante à direita (`#ai-drawer-marker`, `width: 440px; height: 100vh; animation: drawerSlideInRight`). O drawer conta com:
+       - Status da IA em tempo real (`🟢 Online (Gemini)`).
+       - Botão explícito de fechar (`✖ Fechar`) e botão de limpar histórico (`🗑️ Limpar`).
+       - Sugestões de perguntas rápidas através de botões/chips (Saldo Acumulado, Contas a Vencer, Maiores Gastos, Dicas para Poupar).
+       - Histórico conversacional com avatares visuais (`👤` e `🤖`).
+       - Input ágil com formulário limpo e responsivo.
+     - **Regra de Fechamento Automático Mútuo:**
+       - Quando o chat lateral de IA é aberto, o menu de navegação natural / sidebar principal da esquerda é **automaticamente ocultado/fechado** via CSS dinâmico (`section[data-testid="stSidebar"] { display: none !important; }`), eliminando qualquer sobreposição visual de painéis.
+       - Quando o usuário clica em qualquer item de navegação no menu principal em `app.py`, o chat de IA é automaticamente fechado (`st.session_state["ai_chat_open"] = False`).
+       - Ao fechar o chat lateral de IA pelo botão "✖", o menu de navegação da barra lateral é reaberto instantaneamente.
+  3. **Camada de Inteligência e Fallback Multi-Modelo (`backend/utils.py`):**
+     - A função `analyze_finances_with_ai` agora suporta `month_year="geral"` ou `None`, agregando todo o histórico financeiro consolidado quando solicitado.
+     - Implementada a função conversacional `chat_with_financial_ai`, que alimenta o Google Gemini com o contexto financeiro em tempo real do usuário (saldo acumulado, histórico de receitas/despesas, contas pendentes, próximos vencimentos, maiores categorias e patrimônio investido).
+     - Mecanismo de tentativas automáticas com atraso exponencial e fallback progressivo entre modelos (`gemini-3.8-flash` -> `gemini-2.5-flash` -> `gemini-2.0-flash` -> `gemini-1.5-flash`) contra picos de demanda (código 503/429).
+  4. **Validação, Testes e Regra de Ouro:**
+     - Criado o script `.agent/scripts_auxiliares/teste_filtros_e_ia_drawer.py`, validando a seleção de histórico consolidado, mês específico, datas e respostas do Gemini no drawer com 100% de sucesso.
+     - Reexecutados os testes de regressão de performance e cache do Turso Cloud (`teste_performance_cache_turso.py`) e evolução completa (`teste_fase7_evolucao_completa.py`), todos aprovados com 100% de êxito.
+     - Reforçada no topo deste documento a **Regra de Ouro Mandatória** obrigando qualquer IA ou desenvolvedor a ler integralmente este arquivo antes de alterar o código.
+
 
 
