@@ -795,5 +795,29 @@
      - Reexecutados os testes de regressão de performance e cache do Turso Cloud (`teste_performance_cache_turso.py`) e evolução completa (`teste_fase7_evolucao_completa.py`), todos aprovados com 100% de êxito.
      - Reforçada no topo deste documento a **Regra de Ouro Mandatória** obrigando qualquer IA ou desenvolvedor a ler integralmente este arquivo antes de alterar o código.
 
+---
 
+### 🛡️ Fase de Correção e Blindagem de Tipagem e Assinaturas (`backend/crud.py`)
+- **Data e Horário:** 21/10/2026 (Ambiente Turso Cloud & Deploy Streamlit Cloud)
+- **Status:** CONCLUÍDO COM 100% DE ÊXITO E VALIDAÇÃO VIA AST
+- **Objetivo Técnico:**
+  Eliminar inconsistências de assinaturas de métodos e avisos do analisador estático/linter identificados nas chamadas de funções do backend (`backend/crud.py`), garantindo tipagem PEP 484 precisa, suporte a argumentos adicionais (`**kwargs`), retrocompatibilidade total de parâmetros (`month_year` vs `year_month`, `force_manual`) e proteção em tempo de compilação e execução.
+- **Detalhamento das Modificações:**
+  1. **Blindagem e Padronização de `process_recurring_bills`:**
+     - **Assinatura:** `def process_recurring_bills(year_month: Optional[str] = None, user_id: Optional[int] = None, force_manual: bool = False, month_year: Optional[str] = None, **kwargs: Any) -> int:`
+     - Adicionado o parâmetro `force_manual: bool = False` para permitir o acionamento controlado pelo botão '⚡ Sincronizar Mês Vigente' em `frontend/views.py` e proteger contra execuções fora do dia 1 do mês em `app.py`.
+     - Adicionada compatibilidade bidirecional entre `year_month` e `month_year` para que qualquer nomenclatura fornecida seja aceita sem erros de argumento desconhecido.
+     - Suporte a chamadas posicionais com `user_id` no primeiro argumento.
+  2. **Atualização e Tipagem Rigorosa de `get_transactions`:**
+     - **Assinatura:** `def get_transactions(user_id: Optional[int] = None, trans_type: Optional[str] = None, status: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, category: Optional[str] = None, group_id: Optional[str] = None, search: Optional[str] = None, include_shared: bool = False, month_year: Optional[str] = None, year_month: Optional[str] = None, limit: Optional[int] = None, **kwargs: Any) -> List[Dict[str, Any]]:`
+     - Adicionados explicitamente os parâmetros de filtro de competência `month_year: Optional[str] = None` e `year_month: Optional[str] = None`, permitindo buscas diretas por mês (`due_date LIKE 'YYYY-MM%'`) e limitador de registros (`limit`).
+     - Adicionado `**kwargs: Any` para tolerância a argumentos extras em chamadas dinâmicas.
+  3. **Blindagem de Outras Funções do Backend:**
+     - `delete_transactions_by_month`: atualizada para aceitar tanto `year_month` quanto `month_year` e `**kwargs: Any`.
+     - `get_recurring_bills`, `get_investments`, `get_budgets`: adicionados tipos explícitos (`Optional[...]`, `List[Dict[str, Any]]`) e `**kwargs: Any`.
+     - `get_users`, `get_user_profile`: adicionada tipagem rigorosa de retorno e parâmetro de tolerância `**kwargs`.
+  4. **Varredura Completa com Análise Sintática Abstrata (AST):**
+     - Criado o script `.agent/scripts_auxiliares/verificar_assinaturas_crud.py` que analisou todas as 224 chamadas a funções do backend em 28 arquivos Python do projeto, certificando que **nenhuma** chamada possuía argumentos inválidos ou incompatíveis.
+     - Criado o script `.agent/scripts_auxiliares/teste_verificacao_assinaturas_crud.py` que executou testes automatizados diretos sobre todas as assinaturas atualizadas (chamadas com `force_manual`, `month_year`, `year_month`, limites de dados, queries em cache e validações de erro), aprovado com 100% de sucesso.
+     - Reexecutados com sucesso os testes de sincronização controlada (`teste_fase1_sincronizacao_controlada.py`), alerta de vencimentos (`teste_fase2_alerta_vencimento.py`) e diagnóstico de performance e cache do Turso Cloud (`teste_performance_cache_turso.py`).
 

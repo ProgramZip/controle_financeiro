@@ -2,6 +2,7 @@ import uuid
 import calendar
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
+from typing import Optional, List, Dict, Any, Tuple, Union
 import streamlit as st
 from backend.database import (
     get_connection, hash_password, get_user_by_id,
@@ -265,24 +266,28 @@ def add_transaction(
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_transactions(
-    user_id: int = None,
-    trans_type: str = None,
-    status: str = None,
-    start_date: str = None,
-    end_date: str = None,
-    category: str = None,
-    group_id: str = None,
-    search: str = None,
+    user_id: Optional[int] = None,
+    trans_type: Optional[str] = None,
+    status: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    category: Optional[str] = None,
+    group_id: Optional[str] = None,
+    search: Optional[str] = None,
     include_shared: bool = False,
-    month_year: str = None,
-    limit: int = None
-):
+    month_year: Optional[str] = None,
+    year_month: Optional[str] = None,
+    limit: Optional[int] = None,
+    **kwargs: Any
+) -> List[Dict[str, Any]]:
     """
     Retorna lista de movimentações com filtros opcionais (otimizado com cache de 60s).
     POR PADRÃO (include_shared=False): filtra ESTRITAMENTE pelo próprio user_id logado.
     Se include_shared=True: expande para incluir dados de espaços compartilhados.
-    Suporta filtro direto de competência (month_year='YYYY-MM') e limitação de registros (limit).
+    Suporta filtro direto de competência (month_year='YYYY-MM' ou year_month='YYYY-MM') e limitação de registros (limit).
     """
+    if month_year is None and year_month is not None:
+        month_year = year_month
     query = """
         SELECT t.*, u.username AS owner_username
         FROM transactions t
@@ -451,13 +456,21 @@ def delete_transaction(transaction_id: int, user_id: int = None, requesting_user
         return cursor.rowcount > 0
 
 
-def delete_transactions_by_month(user_id: int, year_month: str) -> int:
+def delete_transactions_by_month(
+    user_id: int,
+    year_month: Optional[str] = None,
+    month_year: Optional[str] = None,
+    **kwargs: Any
+) -> int:
     """
     Remove todos os lançamentos pertencentes ao user_id para o mês específico (formato 'YYYY-MM').
+    Aceita year_month ou month_year de forma intercambiável.
     Registra dispensas para transações recorrentes apagadas para não regenerar no mesmo mês.
     """
-    if not year_month or len(year_month) != 7 or "-" not in year_month:
+    ym = year_month or month_year
+    if not ym or len(ym) != 7 or "-" not in ym:
         raise ValueError("Formato de mês inválido. Use 'YYYY-MM'.")
+    year_month = ym
 
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -531,7 +544,12 @@ def add_recurring_bill(
 
 
 @st.cache_data(ttl=180, show_spinner=False)
-def get_recurring_bills(user_id: int = None, is_active: int = None, include_shared: bool = False):
+def get_recurring_bills(
+    user_id: Optional[int] = None,
+    is_active: Optional[int] = None,
+    include_shared: bool = False,
+    **kwargs: Any
+) -> List[Dict[str, Any]]:
     """
     Lista as contas recorrentes cadastradas (otimizado com cache de 180s).
     POR PADRÃO (include_shared=False): filtra ESTRITAMENTE pelo próprio user_id logado.
@@ -615,7 +633,13 @@ def delete_recurring_bill(bill_id: int, requesting_user_id: int = None) -> bool:
         return cursor.rowcount > 0
 
 
-def process_recurring_bills(year_month: str = None, user_id: int = None, force_manual: bool = False) -> int:
+def process_recurring_bills(
+    year_month: Optional[str] = None,
+    user_id: Optional[int] = None,
+    force_manual: bool = False,
+    month_year: Optional[str] = None,
+    **kwargs: Any
+) -> int:
     """
     MOTOR DE RECORRÊNCIA INTELIGENTE E CONTROLADO:
     1. Nunca roda cegamente fora do dia 1 do mês, a menos que force_manual=True (acionado explicitamente pelo usuário).
@@ -624,7 +648,13 @@ def process_recurring_bills(year_month: str = None, user_id: int = None, force_m
        NÃO será regenerada automaticamente.
     4. Se for force_manual=True (botão 'Sincronizar Mês Vigente'), sincroniza as contas do mês e permite
        regenerar contas faltantes limpando as dispensas anteriores desse mês para esse usuário.
+    5. Aceita year_month ou month_year de forma intercambiável, além de chamada posicional com user_id.
     """
+    if year_month is None and month_year is not None:
+        year_month = month_year
+    elif isinstance(year_month, int) and user_id is None:
+        user_id = year_month
+        year_month = month_year
     hoje = datetime.now()
 
     # Se não for acionamento manual e NÃO for o dia 1 do mês, não roda automaticamente
@@ -748,7 +778,11 @@ def add_investment(
 
 
 @st.cache_data(ttl=180, show_spinner=False)
-def get_investments(user_id: int = None, include_shared: bool = False):
+def get_investments(
+    user_id: Optional[int] = None,
+    include_shared: bool = False,
+    **kwargs: Any
+) -> List[Dict[str, Any]]:
     """
     Lista os investimentos da carteira (otimizado com cache de 180s).
     POR PADRÃO (include_shared=False): filtra ESTRITAMENTE pelo próprio user_id logado.
@@ -861,7 +895,11 @@ def set_budget(user_id_or_cat, category_or_limit, monthly_limit: float = None) -
 
 
 @st.cache_data(ttl=180, show_spinner=False)
-def get_budgets(user_id: int = None, include_shared: bool = False):
+def get_budgets(
+    user_id: Optional[int] = None,
+    include_shared: bool = False,
+    **kwargs: Any
+) -> List[Dict[str, Any]]:
     """
     Lista todos os limites de orçamento configurados (otimizado com cache de 180s).
     POR PADRÃO (include_shared=False): filtra ESTRITAMENTE pelo próprio user_id logado.
@@ -917,7 +955,7 @@ def delete_budget(budget_id: int, requesting_user_id: int = None) -> bool:
 # =====================================================================
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_users():
+def get_users(**kwargs: Any) -> List[Dict[str, Any]]:
     """Retorna lista de todos os usuários cadastrados (otimizado com cache de 300s)."""
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -931,7 +969,7 @@ def get_users():
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_user_profile(user_id: int) -> dict | None:
+def get_user_profile(user_id: int, **kwargs: Any) -> Optional[Dict[str, Any]]:
     """Busca o perfil completo do usuário pelo ID (otimizado com cache de 300s)."""
     return get_user_by_id(user_id)
 
