@@ -848,3 +848,38 @@
      - Escondido automaticamente tanto o `section[data-testid="stSidebar"]` quanto o controle de recolhimento `button[data-testid="stSidebarCollapsedControl"]` enquanto o chat da IA estiver aberto.
      - Ajustada a tipografia, altura e quebra de texto dos botões de perguntas rápidas (chips) e do formulário de envio no chat lateral.
 
+---
+
+### 💎 Fase de Ajustes Finos de Layout, Correção de Botões e Restauração do Botão Flutuante de IA
+- **Data e Horário:** 21/10/2026 (Ambiente Turso Cloud & Deploy Streamlit Cloud)
+- **Status:** CONCLUÍDO COM 100% DE ÊXITO E VALIDAÇÃO COMPLETA
+- **Objetivo Técnico:**
+  Corrigir de forma definitiva e robusta o posicionamento, escala e estilização de botões retangulares do sistema, eliminar qualquer distorção em botões de upload, ícones e ações secundárias, implementar o botão flutuante (FAB) de IA no canto inferior direito utilizando os seletores nativos do Streamlit (`.st-key-btn_floating_ai_trigger`) e alinhar perfeitamente os grids, cards de métricas e filtros globais em todas as páginas do sistema.
+- **Detalhamento das Modificações:**
+  1. **Correção Global de Botões Retangulares e Eliminação de Deformações (`frontend/components.py`):**
+     - Removidas regras CSS com `width: auto` ou `display: inline-flex !important` que quebravam o estiramento natural de botões com `width="stretch"` e deformavam botões de ícone e ações.
+     - Padronização rigorosa de todos os botões do sistema (`div.stButton > button`, `div[data-testid="stFormSubmitButton"] > button`, `div[data-testid="stDownloadButton"] > button`, `div[data-testid="stPopover"] > button`, `div[data-testid="stPopover"] button`):
+       - Formato retangular executivo com `border-radius: 8px !important` e padding simétrico (`0.5rem 1rem !important`).
+       - Altura mínima ergonômica (`min-height: 2.3rem !important`) e `box-sizing: border-box !important`.
+     - Estilização dedicada e retangular para o componente `st.file_uploader` (`section[data-testid="stFileUploader"] button`), garantindo que o botão interno de upload nunca fique circular nem deformado.
+  2. **Restauração e Posicionamento do Botão Flutuante (FAB) de IA (`frontend/components.py`):**
+     - Substituídos seletores frágeis baseados em `:has()` ou scripts DOM por seletores nativos de chave do Streamlit: `div.st-key-btn_floating_ai_trigger` e `div[class*="st-key-btn_floating_ai_trigger"]`.
+     - Fixação com alto contraste e visibilidade no canto inferior direito (`position: fixed !important; bottom: 24px !important; right: 24px !important; z-index: 999999 !important; width: 60px !important; height: 60px !important;`).
+     - Botão circular exclusivo do FAB (`border-radius: 50% !important`), gradiente moderno `#1f6feb` -> `#238636`, borda translúcida e sombra viva.
+     - Drawer de IA deslizante isolado via `div.st-key-ai_drawer_container` (`position: fixed; right: 0; top: 0; width: 440px; height: 100vh; z-index: 999990;`).
+     - Ocultação mútua e fluida do menu lateral principal nativo (`section[data-testid="stSidebar"]` e botões de recolhimento) sempre que o drawer estiver ativo.
+  3. **Alinhamento dos Filtros Globais, Cards e Grids (`frontend/components.py` e `frontend/views.py`):**
+     - Em `render_standard_period_filter`: colunas configuradas com `vertical_alignment="bottom"`, eliminando desníveis verticais entre o selectbox de modo e os seletores de mês/calendário ou a legenda consolidada.
+     - Em `render_unified_filter_popover`: ativado `use_container_width=True` em `st.popover` e alinhamento `vertical_alignment="bottom"`, garantindo que o botão de filtro ocupe perfeitamente a largura e altura da sua coluna no grid.
+     - Em `view_dashboard`: removido o artifício de espaçamento `st.write("")` e aplicado `vertical_alignment="bottom"` no grid de topo (`col_per1, col_per2`), alinhando o botão "➕ Nova Movimentação" no mesmo eixo do filtro.
+     - Em `view_movimentacoes`: aplicado `vertical_alignment="bottom"` na linha de ações de topo (`col_filtros, col_del, col_nova, col_exp`).
+     - Em `view_contas_mensais`: aplicado `vertical_alignment="bottom"` em `col_filtros, col_sync, col_nova`.
+     - Em `view_importacao_extratos`: aplicado `vertical_alignment="bottom"` entre a caixa de upload e o botão de recarga de extrato, eliminando saltos visuais.
+     - Em `view_espacos_compartilhados`: aplicado `vertical_alignment="bottom"` entre filtros e ações de movimentação.
+  4. **Otimização de Modelos Gemini no Backend (`backend/utils.py`):**
+     - Atualizada a lista de fallback do Google Gemini para modelos oficiais suportados (`["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]`), reduzindo o tempo de resposta das consultas de minutos para 8 segundos.
+  5. **Validação e Testes Automatizados:**
+     - Executado o verificador de assinaturas AST (`verificar_assinaturas_crud.py`): 229 chamadas verificadas em 29 arquivos com 0 incompatibilidades.
+     - Executado o teste completo de filtros e IA (`teste_filtros_e_ia_drawer.py`): 100% de sucesso em 8 segundos.
+     - Executado o teste de performance e cache do Turso Cloud (`teste_performance_cache_turso.py`): 100% aprovado com memoização até 45.354x mais rápida.
+

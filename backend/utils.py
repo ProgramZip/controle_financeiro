@@ -684,7 +684,7 @@ Analise os dados financeiros reais detalhados abaixo:
     if user_question:
         prompt += f"\n\nPergunta adicional do usuário: {user_question}"
 
-    models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     last_error = ""
 
     try:
@@ -810,7 +810,7 @@ DIRETRIZES DE RESPOSTA:
 
     chat_prompt += f"Pergunta atual de {user_name}: {user_prompt}\nConsultor IA:"
 
-    models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     last_error = ""
 
     try:

@@ -76,24 +76,21 @@ def apply_custom_css():
 
         /* ========================================================= */
         /* PADRONIZAÇÃO GLOBAL DE TODOS OS BOTÕES DO SISTEMA         */
-        /* Formato retangular com cantos levemente arredondados (8px)*/
+        /* Formato retangular executivo com bordas de 6px a 8px       */
+        /* e padding simétrico em todas as páginas                    */
         /* ========================================================= */
         div.stButton > button,
         div[data-testid="stFormSubmitButton"] > button,
         div[data-testid="stDownloadButton"] > button,
-        [data-testid="stPopover"] > button {
+        div[data-testid="stPopover"] > button,
+        div[data-testid="stPopover"] button {
             border-radius: 8px !important;
             font-weight: 600 !important;
             padding: 0.5rem 1rem !important;
-            min-height: 2.4rem !important;
-            height: auto !important;
-            width: auto;
+            min-height: 2.3rem !important;
             line-height: 1.4 !important;
             text-align: center !important;
             transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
             box-sizing: border-box !important;
         }
 
@@ -117,7 +114,7 @@ def apply_custom_css():
         div.stButton > button[kind="secondary"],
         div[data-testid="stFormSubmitButton"] > button[kind="secondary"],
         div[data-testid="stDownloadButton"] > button,
-        [data-testid="stPopover"] > button {
+        div[data-testid="stPopover"] > button {
             background-color: #21262d !important;
             border: 1px solid #30363d !important;
             color: #c9d1d9 !important;
@@ -125,11 +122,28 @@ def apply_custom_css():
         div.stButton > button[kind="secondary"]:hover,
         div[data-testid="stFormSubmitButton"] > button[kind="secondary"]:hover,
         div[data-testid="stDownloadButton"] > button:hover,
-        [data-testid="stPopover"] > button:hover {
+        div[data-testid="stPopover"] > button:hover {
             background-color: #30363d !important;
             border-color: #8b949e !important;
             color: #ffffff !important;
             transform: translateY(-1px) !important;
+        }
+
+        /* Botões internos de Upload (st.file_uploader) */
+        section[data-testid="stFileUploader"] button {
+            border-radius: 8px !important;
+            font-weight: 500 !important;
+            padding: 0.45rem 1rem !important;
+            background-color: #21262d !important;
+            border: 1px solid #30363d !important;
+            color: #c9d1d9 !important;
+            min-height: 2.2rem !important;
+            box-sizing: border-box !important;
+        }
+        section[data-testid="stFileUploader"] button:hover {
+            background-color: #30363d !important;
+            border-color: #58a6ff !important;
+            color: #ffffff !important;
         }
 
         /* Estilização de botões da barra lateral (menu executivo) */
@@ -141,6 +155,7 @@ def apply_custom_css():
             border-radius: 8px !important;
             margin-bottom: 0.25rem !important;
             border: 1px solid rgba(255, 255, 255, 0.08) !important;
+            width: 100% !important;
         }
         section[data-testid="stSidebar"] div.stButton > button:hover {
             border-color: rgba(63, 185, 80, 0.5) !important;
@@ -162,10 +177,11 @@ def apply_custom_css():
 
         /* ========================================================= */
         /* BOTÃO FLUTUANTE DE IA (FAB - CANTO INFERIOR DIREITO)       */
-        /* Isolamento estrito: NENHUM outro botão é afetado          */
+        /* Isolamento total por chave Streamlit (st-key)             */
+        /* NENHUM outro botão é afetado por esta regra               */
         /* ========================================================= */
-        .ai-fab-container,
-        div[data-testid="element-container"]:has(#floating-ai-fab-anchor) + div[data-testid="element-container"] {
+        div.st-key-btn_floating_ai_trigger,
+        div[class*="st-key-btn_floating_ai_trigger"] {
             position: fixed !important;
             bottom: 24px !important;
             right: 24px !important;
@@ -177,17 +193,8 @@ def apply_custom_css():
             pointer-events: auto !important;
         }
 
-        .ai-fab-container div.stButton,
-        div[data-testid="element-container"]:has(#floating-ai-fab-anchor) + div[data-testid="element-container"] div.stButton {
-            width: 60px !important;
-            height: 60px !important;
-            padding: 0 !important;
-            margin: 0 !important;
-        }
-
-        .ai-fab-button,
-        .ai-fab-container div.stButton > button,
-        div[data-testid="element-container"]:has(#floating-ai-fab-anchor) + div[data-testid="element-container"] div.stButton > button {
+        div.st-key-btn_floating_ai_trigger button,
+        div[class*="st-key-btn_floating_ai_trigger"] button {
             width: 60px !important;
             height: 60px !important;
             min-height: 60px !important;
@@ -195,9 +202,9 @@ def apply_custom_css():
             border-radius: 50% !important;
             background: linear-gradient(135deg, #1f6feb 0%, #238636 100%) !important;
             color: #ffffff !important;
-            border: 2px solid rgba(255, 255, 255, 0.4) !important;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 16px rgba(35, 134, 54, 0.6) !important;
-            font-size: 1.4rem !important;
+            border: 2px solid rgba(255, 255, 255, 0.45) !important;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 16px rgba(35, 134, 54, 0.65) !important;
+            font-size: 1.5rem !important;
             font-weight: 700 !important;
             display: flex !important;
             align-items: center !important;
@@ -208,24 +215,19 @@ def apply_custom_css():
             transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
         }
 
-        .ai-fab-button:hover,
-        .ai-fab-container div.stButton > button:hover,
-        div[data-testid="element-container"]:has(#floating-ai-fab-anchor) + div[data-testid="element-container"] div.stButton > button:hover {
+        div.st-key-btn_floating_ai_trigger button:hover,
+        div[class*="st-key-btn_floating_ai_trigger"] button:hover {
             transform: scale(1.1) rotate(6deg) !important;
-            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7), 0 0 24px rgba(35, 134, 54, 0.85) !important;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.8), 0 0 24px rgba(35, 134, 54, 0.85) !important;
             border-color: #58a6ff !important;
-        }
-
-        div[data-testid="element-container"]:has(#floating-ai-fab-anchor) {
-            display: none !important;
         }
 
         /* ========================================================= */
         /* CHAT LATERAL DESLIZANTE (DRAWER DE IA)                    */
+        /* Isolamento total por chave Streamlit (st-key)             */
         /* ========================================================= */
-        .ai-drawer-panel,
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] #ai-drawer-anchor),
-        div[data-testid="stVerticalBlock"]:has(> div #ai-drawer-anchor) {
+        div.st-key-ai_drawer_container,
+        div[class*="st-key-ai_drawer_container"] {
             position: fixed !important;
             top: 0 !important;
             right: 0 !important;
@@ -244,13 +246,9 @@ def apply_custom_css():
             animation: drawerSlideInRight 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
         }
 
-        div[data-testid="element-container"]:has(#ai-drawer-anchor) {
-            display: none !important;
-        }
-
         /* Botões dentro do drawer lateral */
-        .ai-drawer-panel div.stButton > button,
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] #ai-drawer-anchor) div.stButton > button {
+        div.st-key-ai_drawer_container div.stButton > button,
+        div[class*="st-key-ai_drawer_container"] div.stButton > button {
             border-radius: 8px !important;
             font-size: 0.85rem !important;
             padding: 0.45rem 0.6rem !important;
@@ -261,8 +259,8 @@ def apply_custom_css():
         }
 
         /* Perguntas Rápidas (Chips) dentro do drawer */
-        .ai-drawer-panel div[data-testid="stHorizontalBlock"] div.stButton > button,
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] #ai-drawer-anchor) div[data-testid="stHorizontalBlock"] div.stButton > button {
+        div.st-key-ai_drawer_container div[data-testid="stHorizontalBlock"] div.stButton > button,
+        div[class*="st-key-ai_drawer_container"] div[data-testid="stHorizontalBlock"] div.stButton > button {
             background-color: rgba(255, 255, 255, 0.04) !important;
             border: 1px solid rgba(255, 255, 255, 0.12) !important;
             color: #e6edf3 !important;
@@ -270,8 +268,8 @@ def apply_custom_css():
             font-weight: 500 !important;
             margin-bottom: 0.35rem !important;
         }
-        .ai-drawer-panel div[data-testid="stHorizontalBlock"] div.stButton > button:hover,
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] #ai-drawer-anchor) div[data-testid="stHorizontalBlock"] div.stButton > button:hover {
+        div.st-key-ai_drawer_container div[data-testid="stHorizontalBlock"] div.stButton > button:hover,
+        div[class*="st-key-ai_drawer_container"] div[data-testid="stHorizontalBlock"] div.stButton > button:hover {
             background-color: rgba(56, 139, 253, 0.15) !important;
             border-color: #58a6ff !important;
             color: #58a6ff !important;
@@ -292,9 +290,9 @@ def apply_custom_css():
         .filter-period-box {
             background: linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
             border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            padding: 0.9rem 1.2rem;
-            margin-bottom: 1.2rem;
+            border-radius: 10px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 1rem;
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
         }
         </style>
@@ -822,7 +820,7 @@ def render_unified_filter_popover(
     Renderiza um componente centralizado acionado por st.popover com todos os critérios
     avançados de filtro e retorna a lista filtrada de movimentações ou contas.
     """
-    with st.popover("🔍 Filtros Globais", help="Filtros avançados por período, texto, vencimento, valor e categoria"):
+    with st.popover("🔍 Filtros Globais", use_container_width=True, help="Filtros avançados por período, texto, vencimento, valor e categoria"):
         st.markdown("##### 🔍 Filtros Avançados")
         
         # 1. Período
@@ -833,7 +831,7 @@ def render_unified_filter_popover(
         busca_txt = st.text_input("📝 Busca Textual (Descrição ou Favorecido)", placeholder="Digite nome, descrição...", key=f"{key_prefix}_txt")
         
         # 3. Data de vencimento (intervalo ou específica)
-        col_dt_tipo, col_dt_val = st.columns([1.2, 1.8])
+        col_dt_tipo, col_dt_val = st.columns([1.2, 1.8], vertical_alignment="bottom")
         with col_dt_tipo:
             tipo_data = st.selectbox(
                 "📅 Tipo de Data", 
@@ -843,7 +841,7 @@ def render_unified_filter_popover(
         dt_ini, dt_fim, dt_esp = None, None, None
         with col_dt_val:
             if tipo_data == "Intervalo":
-                c_d1, c_d2 = st.columns(2)
+                c_d1, c_d2 = st.columns(2, vertical_alignment="bottom")
                 with c_d1:
                     dt_ini = st.date_input("De", value=date.today().replace(day=1), key=f"{key_prefix}_dt_ini")
                 with c_d2:
@@ -854,7 +852,7 @@ def render_unified_filter_popover(
                 st.caption("Todas as datas de vencimento")
         
         # 4. Faixa de Valor (Mínimo e Máximo)
-        c_v1, c_v2 = st.columns(2)
+        c_v1, c_v2 = st.columns(2, vertical_alignment="bottom")
         with c_v1:
             val_min = st.number_input("Valor Mínimo (R$)", min_value=0.0, value=0.0, step=10.0, key=f"{key_prefix}_vmin")
         with c_v2:
@@ -931,7 +929,7 @@ def render_standard_period_filter(
         "📆 Período Personalizado (Calendário)"
     ]
 
-    col_m, col_v = st.columns([1.5, 2.5])
+    col_m, col_v = st.columns([1.5, 2.5], vertical_alignment="bottom")
 
     with col_m:
         modo_sel = st.selectbox(
@@ -952,7 +950,7 @@ def render_standard_period_filter(
     with col_v:
         if modo_sel == "🌐 Todo o Histórico (Geral)":
             st.markdown(
-                "<div style='padding-top: 1.8rem; color: #8b949e; font-size: 0.9rem;'>"
+                "<div style='color: #8b949e; font-size: 0.88rem; padding: 0.55rem 0.85rem; background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.1); border-radius: 8px;'>"
                 "📊 Exibindo <b>métricas e balanço consolidados</b> de todo o seu histórico financeiro."
                 "</div>",
                 unsafe_allow_html=True
@@ -984,7 +982,7 @@ def render_standard_period_filter(
             }
 
         elif modo_sel == "📆 Período Personalizado (Calendário)":
-            c_d1, c_d2 = st.columns(2)
+            c_d1, c_d2 = st.columns(2, vertical_alignment="bottom")
             with c_d1:
                 hoje = date.today()
                 dt_ini_val = hoje.replace(day=1)
@@ -1024,56 +1022,25 @@ def render_floating_ai_assistant(user: dict):
             section[data-testid="stSidebar"] {
                 display: none !important;
             }
-            button[data-testid="stSidebarCollapsedControl"] {
+            button[data-testid="stSidebarCollapsedControl"],
+            div[data-testid="collapsedControl"] {
                 display: none !important;
             }
             </style>
         """, unsafe_allow_html=True)
 
     # 2. Botão Flutuante (FAB) fixo no canto inferior direito
-    with st.container():
-        st.markdown("""
-            <div id="floating-ai-fab-anchor">
-                <script>
-                (function() {
-                    const anchor = document.getElementById('floating-ai-fab-anchor');
-                    if (anchor) {
-                        const nextElem = anchor.closest('[data-testid="element-container"]')?.nextElementSibling;
-                        if (nextElem) {
-                            nextElem.classList.add('ai-fab-container');
-                            const btn = nextElem.querySelector('button');
-                            if (btn) btn.classList.add('ai-fab-button');
-                        }
-                    }
-                })();
-                </script>
-            </div>
-        """, unsafe_allow_html=True)
-        fab_label = "✖" if is_open else "🤖"
-        fab_help = "Fechar Consultor IA" if is_open else "Abrir Consultor Financeiro IA (Google Gemini)"
-        if st.button(fab_label, key="btn_floating_ai_trigger", help=fab_help):
-            st.session_state["ai_chat_open"] = not is_open
-            st.rerun()
+    fab_label = "✖" if is_open else "🤖"
+    fab_help = "Fechar Consultor IA" if is_open else "Abrir Consultor Financeiro IA (Google Gemini)"
+    if st.button(fab_label, key="btn_floating_ai_trigger", help=fab_help):
+        st.session_state["ai_chat_open"] = not is_open
+        st.rerun()
 
     # 3. Drawer Lateral Deslizante de IA (Chat Lateral)
     if is_open:
-        with st.container():
-            st.markdown("""
-                <div id="ai-drawer-anchor">
-                    <script>
-                    (function() {
-                        const anchor = document.getElementById('ai-drawer-anchor');
-                        if (anchor) {
-                            const block = anchor.closest('[data-testid="stVerticalBlock"]');
-                            if (block) block.classList.add('ai-drawer-panel');
-                        }
-                    })();
-                    </script>
-                </div>
-            """, unsafe_allow_html=True)
-
+        with st.container(key="ai_drawer_container"):
             # Cabeçalho do Drawer
-            col_h1, col_h2 = st.columns([3.5, 1.2])
+            col_h1, col_h2 = st.columns([3.5, 1.2], vertical_alignment="center")
             with col_h1:
                 st.markdown("""
                     <div style="display: flex; align-items: center; gap: 8px;">

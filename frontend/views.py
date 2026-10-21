@@ -190,7 +190,7 @@ def view_dashboard(user: dict):
         meses_com_dados.insert(0, mes_atual_str)
 
     # 2. Seletor de Período Padronizado (Padrão: 🌐 Todo o Histórico Geral)
-    col_per1, col_per2 = st.columns([3.5, 1])
+    col_per1, col_per2 = st.columns([3.5, 1], vertical_alignment="bottom")
     with col_per1:
         filtro_periodo = render_standard_period_filter(
             available_months=meses_com_dados,
@@ -198,8 +198,6 @@ def view_dashboard(user: dict):
             default_mode_index=0  # Padrão: 🌐 Todo o Histórico (Geral)
         )
     with col_per2:
-        st.write("")
-        st.write("")
         if st.button("➕ Nova Movimentação", type="primary", width='stretch', key="btn_dash_nova_mov"):
             modal_nova_movimentacao(user["id"])
 
@@ -352,7 +350,7 @@ def view_movimentacoes(user: dict):
     if mes_atual_str not in meses_com_dados:
         meses_com_dados.insert(0, mes_atual_str)
 
-    col_filtros, col_del, col_nova, col_exp = st.columns([1.5, 1.2, 1.4, 1.2])
+    col_filtros, col_del, col_nova, col_exp = st.columns([1.5, 1.2, 1.4, 1.2], vertical_alignment="bottom")
 
     with col_filtros:
         trans_ativas = render_unified_filter_popover(all_trans, meses_com_dados, key_prefix="mov_filters")
@@ -544,7 +542,7 @@ def view_contas_mensais(user: dict):
     all_contas = get_recurring_bills(user_id=user["id"])
 
     # Ações de Topo: Popover de Filtros Globais, Nova Conta Recorrente (Modal) e Sincronização
-    col_filtros, col_sync, col_nova = st.columns([1.5, 1.3, 1.4])
+    col_filtros, col_sync, col_nova = st.columns([1.5, 1.3, 1.4], vertical_alignment="bottom")
     with col_filtros:
         contas_ativas = render_unified_filter_popover(
             all_contas, 
@@ -674,12 +672,10 @@ def view_importacao_extratos(user: dict):
     st.title("📄 Importação de Extratos & Conciliação")
     st.write("Carregue seu extrato bancário em PDF ou CSV. Revise e concilie os lançamentos antes de salvar no sistema.")
 
-    col_up1, col_up2 = st.columns([3, 1])
+    col_up1, col_up2 = st.columns([3, 1], vertical_alignment="bottom")
     with col_up1:
         uploaded_file = st.file_uploader("Selecione o arquivo de extrato", type=["csv", "pdf"])
     with col_up2:
-        st.write("")
-        st.write("")
         if st.button("🔄 Recarregar Extrato", width='stretch'):
             st.session_state.pop("df_importacao", None)
             st.session_state.pop("last_uploaded", None)
@@ -1091,7 +1087,7 @@ def view_espacos_compartilhados(user: dict):
                 # ---------------- MODO SEGUNDA ÁREA DE TRABALHO (EDITOR) ----------------
                 st.success(f"✏️ **Modo Editor Conectado:** Você está na **Segunda Área de Trabalho** de **{owner_username}**. Todas as alterações, inclusões e quitações serão gravadas diretamente no espaço dele.")
 
-                col_sf1, col_sf2 = st.columns([3, 1.5])
+                col_sf1, col_sf2 = st.columns([3, 1.5], vertical_alignment="bottom")
                 with col_sf1:
                     trans_ativas = render_unified_filter_popover(trans_prop, meses_com_dados, key_prefix=f"sh_ed_{owner_id}")
                 with col_sf2:
