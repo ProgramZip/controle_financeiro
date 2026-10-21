@@ -821,3 +821,30 @@
      - Criado o script `.agent/scripts_auxiliares/teste_verificacao_assinaturas_crud.py` que executou testes automatizados diretos sobre todas as assinaturas atualizadas (chamadas com `force_manual`, `month_year`, `year_month`, limites de dados, queries em cache e validações de erro), aprovado com 100% de sucesso.
      - Reexecutados com sucesso os testes de sincronização controlada (`teste_fase1_sincronizacao_controlada.py`), alerta de vencimentos (`teste_fase2_alerta_vencimento.py`) e diagnóstico de performance e cache do Turso Cloud (`teste_performance_cache_turso.py`).
 
+---
+
+### 🎨 Fase de Correção de Bugs Visuais, Restauração de Botões e Limpeza de Configurações
+- **Data e Horário:** 21/10/2026 (Ambiente Turso Cloud & Deploy Streamlit Cloud)
+- **Status:** CONCLUÍDO COM 100% DE ÊXITO E VALIDAÇÃO VISUAL/TÉCNICA
+- **Objetivo Técnico:**
+  Corrigir regressão visual na renderização dos botões do Streamlit (que estavam assumindo formato circular/pill gigante com texto cortado devido a vazamento de seletores CSS do botão flutuante de IA), restaurar o formato retangular elegante com cantos arredondados (`border-radius: 8px`), remover definitivamente a seção legada de "Chave de API do Gemini" da tela de Configurações & Perfil e otimizar o fechamento mútuo e alinhamento do chat lateral da IA.
+- **Detalhamento das Modificações:**
+  1. **Restauração Global de Estilização de Botões (`frontend/components.py`):**
+     - Identificada a causa-raiz: o seletor `:has(> div #floating-ai-marker)` estava combinando com os blocos ancestrais do Streamlit, vazando `border-radius: 50% !important; width: 60px !important; height: 60px !important` para todos os botões do sistema.
+     - Implementado seletor estritamente isolado via sibling adjacente `div[data-testid="element-container"]:has(#floating-ai-fab-anchor) + div[data-testid="element-container"]` e classe `.ai-fab-container / .ai-fab-button` com injeção de script de marcação imediata.
+     - Definida a padronização global explícita para todos os botões do sistema (`div.stButton > button`, `div[data-testid="stFormSubmitButton"] > button`, `div[data-testid="stDownloadButton"] > button`, `[data-testid="stPopover"] > button`):
+       - Formato retangular executivo com `border-radius: 8px !important`.
+       - Padding equilibrado (`0.5rem 1rem !important`), altura mínima confortável (`min-height: 2.4rem !important`) e largura natural/responsiva (`width: auto`).
+       - Diferenciação visual elegante entre botões primários (`#238636`, sombra verde) e secundários (`#21262d`, borda `#30363d`), ambos com micro-hover suave (`translateY(-1px)`).
+  2. **Limpeza Definitiva da Página de Configurações (`frontend/views.py`):**
+     - Removida completamente a seção legada "🔑 Chave de API do Gemini" (`GEMINI_API_KEY`) da tela `view_configuracoes_perfil`, uma vez que a chave de IA é gerida centralmente e a interação ocorre exclusivamente pelo FAB e Drawer lateral.
+     - Renumeradas e reorganizadas as seções restantes:
+       1. Perfil Cadastral (Nome Completo, Endereço e CPF)
+       2. Backup & Restauração do Banco de Dados
+       3. Segurança & Alteração de Senha
+       4. Gestão de Usuários e Permissões (exclusivo para perfil Administrador)
+  3. **Ajustes no Botão Flutuante e Drawer Lateral de IA (`frontend/components.py`):**
+     - Isolamento rigoroso do painel lateral através de `.ai-drawer-panel` e `> div[data-testid="element-container"] #ai-drawer-anchor`.
+     - Escondido automaticamente tanto o `section[data-testid="stSidebar"]` quanto o controle de recolhimento `button[data-testid="stSidebarCollapsedControl"]` enquanto o chat da IA estiver aberto.
+     - Ajustada a tipografia, altura e quebra de texto dos botões de perguntas rápidas (chips) e do formulário de envio no chat lateral.
+

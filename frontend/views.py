@@ -927,28 +927,7 @@ def view_configuracoes_perfil(user: dict):
 
     st.markdown("---")
 
-    # 2. CHAVE DE API DO GEMINI
-    st.subheader("🔑 Chave de API do Gemini")
-    chave_atual = os.getenv("GEMINI_API_KEY", "")
-    if not chave_atual:
-        try:
-            chave_atual = str(st.secrets.get("GEMINI_API_KEY", ""))
-        except Exception:
-            pass
-    nova_chave = st.text_input("GEMINI_API_KEY", value=chave_atual if chave_atual != "sua_chave_aqui" else "", type="password")
-    if st.button("Salvar Chave"):
-        if nova_chave.strip():
-            env_path = BASE_DIR / ".env"
-            with open(env_path, "w", encoding="utf-8") as f:
-                f.write(f'GEMINI_API_KEY="{nova_chave.strip()}"\n')
-            os.environ["GEMINI_API_KEY"] = nova_chave.strip()
-            st.success("Chave salva com sucesso no arquivo .env!")
-        else:
-            st.error("Informe uma chave válida.")
-
-    st.markdown("---")
-
-    # 3. BACKUP & RESTAURAÇÃO
+    # 2. BACKUP & RESTAURAÇÃO
     st.subheader("💾 Backup & Restauração do Banco de Dados")
     col_bk1, col_bk2 = st.columns(2)
     with col_bk1:
@@ -973,7 +952,7 @@ def view_configuracoes_perfil(user: dict):
                 else:
                     st.error(msg)
 
-    # 4. SEGURANÇA & ALTERAÇÃO DE SENHA
+    # 3. SEGURANÇA & ALTERAÇÃO DE SENHA
     st.markdown("---")
     st.subheader("🔐 Segurança & Alteração de Senha")
     st.write(f"Altere a sua senha de acesso ao sistema (Usuário conectado: **{user['username']}**).")
@@ -1002,7 +981,7 @@ def view_configuracoes_perfil(user: dict):
                 else:
                     st.error(msg)
 
-    # 5. GESTÃO DE USUÁRIOS (ADMIN)
+    # 4. GESTÃO DE USUÁRIOS (ADMIN)
     if user.get("role") == "admin":
         st.markdown("---")
         st.subheader("👥 Gestão de Usuários")

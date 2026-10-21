@@ -74,11 +74,62 @@ def apply_custom_css():
             color: #3fb950;
         }
 
-        /* Estilização de botões principais */
-        div.stButton > button:first-child {
-            border-radius: 8px;
-            font-weight: 600;
-            transition: all 0.2s ease;
+        /* ========================================================= */
+        /* PADRONIZAÇÃO GLOBAL DE TODOS OS BOTÕES DO SISTEMA         */
+        /* Formato retangular com cantos levemente arredondados (8px)*/
+        /* ========================================================= */
+        div.stButton > button,
+        div[data-testid="stFormSubmitButton"] > button,
+        div[data-testid="stDownloadButton"] > button,
+        [data-testid="stPopover"] > button {
+            border-radius: 8px !important;
+            font-weight: 600 !important;
+            padding: 0.5rem 1rem !important;
+            min-height: 2.4rem !important;
+            height: auto !important;
+            width: auto;
+            line-height: 1.4 !important;
+            text-align: center !important;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            box-sizing: border-box !important;
+        }
+
+        /* Botões Primários */
+        div.stButton > button[kind="primary"],
+        div[data-testid="stFormSubmitButton"] > button[kind="primary"] {
+            background-color: #238636 !important;
+            border: 1px solid rgba(255, 255, 255, 0.15) !important;
+            color: #ffffff !important;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25) !important;
+        }
+        div.stButton > button[kind="primary"]:hover,
+        div[data-testid="stFormSubmitButton"] > button[kind="primary"]:hover {
+            background-color: #2ea043 !important;
+            border-color: #3fb950 !important;
+            box-shadow: 0 4px 12px rgba(35, 134, 54, 0.35) !important;
+            transform: translateY(-1px) !important;
+        }
+
+        /* Botões Secundários */
+        div.stButton > button[kind="secondary"],
+        div[data-testid="stFormSubmitButton"] > button[kind="secondary"],
+        div[data-testid="stDownloadButton"] > button,
+        [data-testid="stPopover"] > button {
+            background-color: #21262d !important;
+            border: 1px solid #30363d !important;
+            color: #c9d1d9 !important;
+        }
+        div.stButton > button[kind="secondary"]:hover,
+        div[data-testid="stFormSubmitButton"] > button[kind="secondary"]:hover,
+        div[data-testid="stDownloadButton"] > button:hover,
+        [data-testid="stPopover"] > button:hover {
+            background-color: #30363d !important;
+            border-color: #8b949e !important;
+            color: #ffffff !important;
+            transform: translateY(-1px) !important;
         }
 
         /* Estilização de botões da barra lateral (menu executivo) */
@@ -93,19 +144,7 @@ def apply_custom_css():
         }
         section[data-testid="stSidebar"] div.stButton > button:hover {
             border-color: rgba(63, 185, 80, 0.5) !important;
-            transform: translateX(2px);
-        }
-
-        /* Estilização refinada para Popovers e Modais */
-        [data-testid="stPopover"] button {
-            border-radius: 8px !important;
-            font-weight: 500 !important;
-            border: 1px solid rgba(255, 255, 255, 0.15) !important;
-            background-color: rgba(255, 255, 255, 0.03) !important;
-        }
-        [data-testid="stPopover"] button:hover {
-            border-color: #58a6ff !important;
-            background-color: rgba(88, 166, 255, 0.08) !important;
+            transform: translateX(2px) !important;
         }
 
         /* Tabelas responsivas com cantos arredondados */
@@ -122,46 +161,76 @@ def apply_custom_css():
         }
 
         /* ========================================================= */
-        /* BOTÃO FLUTUANTE DE IA (CANTO INFERIOR DIREITO)             */
+        /* BOTÃO FLUTUANTE DE IA (FAB - CANTO INFERIOR DIREITO)       */
+        /* Isolamento estrito: NENHUM outro botão é afetado          */
         /* ========================================================= */
-        div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker) {
+        .ai-fab-container,
+        div[data-testid="element-container"]:has(#floating-ai-fab-anchor) + div[data-testid="element-container"] {
             position: fixed !important;
             bottom: 24px !important;
             right: 24px !important;
             z-index: 999999 !important;
-            width: auto !important;
-        }
-        div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker) button {
             width: 60px !important;
             height: 60px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            pointer-events: auto !important;
+        }
+
+        .ai-fab-container div.stButton,
+        div[data-testid="element-container"]:has(#floating-ai-fab-anchor) + div[data-testid="element-container"] div.stButton {
+            width: 60px !important;
+            height: 60px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+
+        .ai-fab-button,
+        .ai-fab-container div.stButton > button,
+        div[data-testid="element-container"]:has(#floating-ai-fab-anchor) + div[data-testid="element-container"] div.stButton > button {
+            width: 60px !important;
+            height: 60px !important;
+            min-height: 60px !important;
+            max-height: 60px !important;
             border-radius: 50% !important;
             background: linear-gradient(135deg, #1f6feb 0%, #238636 100%) !important;
             color: #ffffff !important;
             border: 2px solid rgba(255, 255, 255, 0.4) !important;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 16px rgba(35, 134, 54, 0.6) !important;
-            font-size: 1.3rem !important;
+            font-size: 1.4rem !important;
             font-weight: 700 !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
             padding: 0 !important;
+            margin: 0 !important;
+            cursor: pointer !important;
             transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
         }
-        div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker) button:hover {
+
+        .ai-fab-button:hover,
+        .ai-fab-container div.stButton > button:hover,
+        div[data-testid="element-container"]:has(#floating-ai-fab-anchor) + div[data-testid="element-container"] div.stButton > button:hover {
             transform: scale(1.1) rotate(6deg) !important;
             box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7), 0 0 24px rgba(35, 134, 54, 0.85) !important;
             border-color: #58a6ff !important;
         }
 
+        div[data-testid="element-container"]:has(#floating-ai-fab-anchor) {
+            display: none !important;
+        }
+
         /* ========================================================= */
         /* CHAT LATERAL DESLIZANTE (DRAWER DE IA)                    */
         /* ========================================================= */
-        div[data-testid="stVerticalBlock"]:has(> div #ai-drawer-marker) {
+        .ai-drawer-panel,
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] #ai-drawer-anchor),
+        div[data-testid="stVerticalBlock"]:has(> div #ai-drawer-anchor) {
             position: fixed !important;
             top: 0 !important;
             right: 0 !important;
             width: 440px !important;
-            max-width: 92vw !important;
+            max-width: 90vw !important;
             height: 100vh !important;
             background-color: #0d1117 !important;
             border-left: 1px solid rgba(255, 255, 255, 0.15) !important;
@@ -169,8 +238,45 @@ def apply_custom_css():
             z-index: 999990 !important;
             padding: 1.2rem 1.2rem 2.5rem 1.2rem !important;
             overflow-y: auto !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 0.8rem !important;
             animation: drawerSlideInRight 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
         }
+
+        div[data-testid="element-container"]:has(#ai-drawer-anchor) {
+            display: none !important;
+        }
+
+        /* Botões dentro do drawer lateral */
+        .ai-drawer-panel div.stButton > button,
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] #ai-drawer-anchor) div.stButton > button {
+            border-radius: 8px !important;
+            font-size: 0.85rem !important;
+            padding: 0.45rem 0.6rem !important;
+            min-height: 2.2rem !important;
+            height: auto !important;
+            width: 100% !important;
+            line-height: 1.3 !important;
+        }
+
+        /* Perguntas Rápidas (Chips) dentro do drawer */
+        .ai-drawer-panel div[data-testid="stHorizontalBlock"] div.stButton > button,
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] #ai-drawer-anchor) div[data-testid="stHorizontalBlock"] div.stButton > button {
+            background-color: rgba(255, 255, 255, 0.04) !important;
+            border: 1px solid rgba(255, 255, 255, 0.12) !important;
+            color: #e6edf3 !important;
+            text-align: center !important;
+            font-weight: 500 !important;
+            margin-bottom: 0.35rem !important;
+        }
+        .ai-drawer-panel div[data-testid="stHorizontalBlock"] div.stButton > button:hover,
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] #ai-drawer-anchor) div[data-testid="stHorizontalBlock"] div.stButton > button:hover {
+            background-color: rgba(56, 139, 253, 0.15) !important;
+            border-color: #58a6ff !important;
+            color: #58a6ff !important;
+        }
+
         @keyframes drawerSlideInRight {
             from {
                 transform: translateX(100%);
@@ -918,12 +1024,31 @@ def render_floating_ai_assistant(user: dict):
             section[data-testid="stSidebar"] {
                 display: none !important;
             }
+            button[data-testid="stSidebarCollapsedControl"] {
+                display: none !important;
+            }
             </style>
         """, unsafe_allow_html=True)
 
     # 2. Botão Flutuante (FAB) fixo no canto inferior direito
     with st.container():
-        st.markdown('<div id="floating-ai-marker"></div>', unsafe_allow_html=True)
+        st.markdown("""
+            <div id="floating-ai-fab-anchor">
+                <script>
+                (function() {
+                    const anchor = document.getElementById('floating-ai-fab-anchor');
+                    if (anchor) {
+                        const nextElem = anchor.closest('[data-testid="element-container"]')?.nextElementSibling;
+                        if (nextElem) {
+                            nextElem.classList.add('ai-fab-container');
+                            const btn = nextElem.querySelector('button');
+                            if (btn) btn.classList.add('ai-fab-button');
+                        }
+                    }
+                })();
+                </script>
+            </div>
+        """, unsafe_allow_html=True)
         fab_label = "✖" if is_open else "🤖"
         fab_help = "Fechar Consultor IA" if is_open else "Abrir Consultor Financeiro IA (Google Gemini)"
         if st.button(fab_label, key="btn_floating_ai_trigger", help=fab_help):
@@ -933,7 +1058,19 @@ def render_floating_ai_assistant(user: dict):
     # 3. Drawer Lateral Deslizante de IA (Chat Lateral)
     if is_open:
         with st.container():
-            st.markdown('<div id="ai-drawer-marker"></div>', unsafe_allow_html=True)
+            st.markdown("""
+                <div id="ai-drawer-anchor">
+                    <script>
+                    (function() {
+                        const anchor = document.getElementById('ai-drawer-anchor');
+                        if (anchor) {
+                            const block = anchor.closest('[data-testid="stVerticalBlock"]');
+                            if (block) block.classList.add('ai-drawer-panel');
+                        }
+                    })();
+                    </script>
+                </div>
+            """, unsafe_allow_html=True)
 
             # Cabeçalho do Drawer
             col_h1, col_h2 = st.columns([3.5, 1.2])
